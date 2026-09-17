@@ -42,7 +42,16 @@ describe('产物 · 宿主半区 lib/index.js', () => {
     assert.ok(mod.Config, '必须导出 Config schema')
     assert.equal(mod.SETTINGS_NAMESPACE, 'dsh-qiniu-usage')
     assert.equal(typeof mod.resolveConfig, 'function')
-    assert.equal(mod.default, mod.apply, 'default 导出应指向 apply')
+    // ⚠ 这条断言在 M0 时写反过：当时断言 default 必须存在（因为源码里有
+    // `export default apply`），结果把一个**会导致 dsh web 启动失败**的形状
+    // 当成了正确行为。cordis-plugin-loader 的 `unwrapExports` 会优先取 default，
+    // 拿到裸函数后丢失整份命名空间（含 inject），启动期报
+    // `cannot get property "webServer" without inject`。
+    assert.equal(
+      mod.default,
+      undefined,
+      '本模块不得导出 default —— loader 会优先取它并丢掉 inject',
+    )
   })
 
   it('resolveConfig 对空配置给出完整默认值', async () => {

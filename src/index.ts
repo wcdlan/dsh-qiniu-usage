@@ -38,6 +38,22 @@ export const name = 'dsh-qiniu-usage'
 /** 必需服务：headless profile 缺 `webServer` 时本插件不适用。 */
 export const inject = ['webServer']
 
+/**
+ * ⚠ **本模块绝不能有 `export default`。**
+ *
+ * cordis-plugin-loader 的 `unwrapExports` 会做 `exports = exports.default ?? exports`，
+ * 因此一旦导出 `default`，loader 拿到的是那个裸函数，**整个模块命名空间（连同这里的
+ * `inject` 与 `name`）都被丢弃**。后果是 fiber 的 inject 为空，插件里任何
+ * `ctx.webServer` 读取都会在启动期抛：
+ *
+ * ```
+ * Error: cannot get property "webServer" without inject
+ * ```
+ *
+ * 参考实现（`@linxin666/dsh-usage`）同样只用具名导出。`test/contract.test.ts` 里有
+ * 一条回归测试直接复刻 `unwrapExports` 来钉住这一点。
+ */
+
 export { Config, SETTINGS_NAMESPACE, resolveConfig }
 export type { ConfigShape, ResolvedConfig }
 
@@ -143,5 +159,3 @@ export const apply = mountOnce(PACKAGE_NAME, (ctx: Context, config?: ConfigShape
     'dsh-qiniu-usage: runtime',
   )
 })
-
-export default apply

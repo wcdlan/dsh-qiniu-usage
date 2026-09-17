@@ -823,7 +823,47 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 GET 带这个头会让签名串多一行。本实现按 §3.2 易错点 3 的做法**不带**，签名器对
 GET 永远省略 `Content-Type`。
 
-### 15.5 构建工具链：esbuild + 手写 ModuleLoader 外壳
+### 15.5 ⚠ 宿主插件绝不能 `export default`（真实启动失败）
+
+这条是**装进 profile 后 `dsh web` 启动直接崩**换来的，代价最大，所以写在前面。
+
+`cordis-plugin-loader` 在 `_init()` 里这样取插件：
+
+```js
+plugin = this.loader.unwrapExports(await this.parent.tree.import(this.options.name, ...))
+
+// unwrapExports：
+exports = exports.default ?? exports;
+if (!exports.__esModule) return exports;
+return exports.default ?? exports;
+```
+
+也就是说 **loader 优先取 `default`**。当初 `src/index.ts` 末尾有一句 `export default apply`，
+于是 loader 拿到的是那个**裸函数**，整个模块命名空间（含 `export const inject = ['webServer']`
+与 `name`）被一并丢弃 → fiber 的 inject 为空 → 插件里第一次读 `ctx.webServer` 就被 cordis 的
+服务代理拒绝：
+
+```
+Error: dsh: plugin tree failed to load: failed to apply loader entry qiniu-usage
+(dsh-qiniu-usage): cannot get property "webServer" without inject
+```
+
+**只用具名导出**（`name` / `inject` / `apply` / `Config`），与 `@linxin666/dsh-usage` 一致。
+
+**为什么当时的测试没拦住？** 两个测试各自漏了一半：
+
+1. 产物契约测试只断言"模块导出了什么"，**没走 cordis 的 inject 解析 + 应用**，
+   所以 `inject` 存在这件事在测试里恒真。
+2. 更糟的是 M0 写的产物测试**把 bug 当成了正确行为**：
+   `assert.equal(mod.default, mod.apply, 'default 导出应指向 apply')` —— 断言本身
+   在要求这个致命形状存在。
+
+现在补齐了两层：`test/contract.test.ts` 复刻 `unwrapExports` 断言归一后仍带 `inject`；
+`test/host-boot.test.ts` 用**真 cordis Context** 提供 `webServer` 桩服务并实际 apply 一次，
+断言 6 条路由注册成功、禁用时不注册、卸载时 dispose。后者已用"故意加回 `export default`"
+验证过确实会红。
+
+### 15.6 构建工具链：esbuild + 手写 ModuleLoader 外壳
 
 `tsdown` 的 output 形态无法直接产出 `window.__ModuleLoader__.load({...})`，
 且参考包**都没发布构建配置**。M0 的解法是用 esbuild（打成 CJS）+ 一个薄包装

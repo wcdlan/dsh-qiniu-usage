@@ -10,6 +10,7 @@
  */
 
 import { strict as assert } from 'node:assert'
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -116,6 +117,64 @@ describe('跨半区契约 · 设置命名空间与分区', () => {
     const patch = await readFile(resolve(root, 'cordis.patch.yml'), 'utf8')
     assert.ok(patch.includes('id: qiniu-usage'), 'patch 应插入 qiniu-usage 行')
     assert.ok(patch.includes('name: dsh-qiniu-usage'), 'patch 的 name 应为包名')
+  })
+})
+
+describe('跨半区契约 · loader 装载形状（真实启动期踩过的坑）', () => {
+  /**
+   * 复刻 cordis-plugin-loader 的 `unwrapExports`：
+   *
+   * ```js
+   * exports = exports.default ?? exports;
+   * if (!exports.__esModule) return exports;
+   * return exports.default ?? exports;
+   * ```
+   *
+   * 宿主插件只要导出了 `default`，loader 就会拿到那个 `default` 而**丢掉整个模块
+   * 命名空间** —— `inject` 随之消失，启动期就报
+   * `cannot get property "webServer" without inject`。
+   *
+   * @param exports - 模块命名空间。
+   * @returns loader 实际会拿去当插件的值。
+   */
+  function unwrapExports(exports: unknown): unknown {
+    if (exports === null || exports === undefined) return exports
+    let value = (exports as { default?: unknown }).default ?? exports
+    if (!(value as { __esModule?: boolean }).__esModule) return value
+    value = (value as { default?: unknown }).default ?? value
+    return value
+  }
+
+  it('loader 归一后必须仍能读到 inject 与 apply（即：不能导出 default）', async () => {
+    const hostBundle = resolve(root, 'lib/index.js')
+    assert.ok(existsSync(hostBundle), '宿主产物不存在，先运行 npm run build:js')
+
+    const namespace = (await import(hostBundle)) as Record<string, unknown>
+    const plugin = unwrapExports(namespace) as Record<string, unknown>
+
+    assert.ok(
+      plugin !== null && typeof plugin === 'object',
+      'loader 归一后拿到的不应是裸函数 —— 说明导出了 default，inject 会被丢弃',
+    )
+    assert.equal(typeof plugin.apply, 'function', 'loader 归一后必须能读到 apply')
+    assert.deepEqual(
+      Array.from((plugin.inject as string[]) ?? []),
+      ['webServer'],
+      'loader 归一后必须仍带 inject —— 否则启动期报 cannot get property webServer without inject',
+    )
+    assert.equal(plugin.name, 'dsh-qiniu-usage')
+    assert.ok(
+      namespace.default === undefined,
+      '本模块不得导出 default：loader 的 unwrapExports 会优先取它并丢掉 inject',
+    )
+  })
+
+  it('源码里也没有 export default（防止重新加回来）', async () => {
+    const source = await readFile(resolve(root, 'src/index.ts'), 'utf8')
+    assert.ok(
+      !/^\s*export\s+default\b/m.test(source),
+      'src/index.ts 不得出现 export default',
+    )
   })
 })
 
