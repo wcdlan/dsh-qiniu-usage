@@ -102,7 +102,88 @@ function installFetch(): { calls: string[]; restore: () => void } {
 
 afterEach(() => {
   document.body.replaceChildren()
+  // 位置是"按浏览器记住"的，用例之间必须清干净，否则互相污染。
+  window.localStorage.clear()
+  for (const restore of rectRestores.splice(0)) restore()
 })
+
+/** 已安装的 getBoundingClientRect 替身，用例结束统一还原。 */
+const rectRestores: (() => void)[] = []
+
+/**
+ * 让所有元素报告同一个矩形。
+ *
+ * jsdom 没有布局引擎，`getBoundingClientRect()` 一律返回全 0，FAB 的"量出位置"
+ * 与拖拽都需要真实尺寸，所以这里自己喂。
+ */
+function installRect(rect: { left: number; top: number; width: number; height: number }): void {
+  const original = Element.prototype.getBoundingClientRect
+  Element.prototype.getBoundingClientRect = function (): DOMRect {
+    return {
+      x: rect.left,
+      y: rect.top,
+      left: rect.left,
+      top: rect.top,
+      width: rect.width,
+      height: rect.height,
+      right: rect.left + rect.width,
+      bottom: rect.top + rect.height,
+      toJSON: () => ({}),
+    } as DOMRect
+  }
+  rectRestores.push(() => {
+    Element.prototype.getBoundingClientRect = original
+  })
+}
+
+/**
+ * 派发一个指针事件。
+ *
+ * jsdom 没有 `PointerEvent` 构造器，所以用 `Event` 加手填字段 —— React 是从
+ * 原生事件对象上读 `clientX`/`pointerId` 的，手填即可。
+ */
+function pointer(
+  target: Element,
+  type: 'pointerdown' | 'pointermove' | 'pointerup',
+  x: number,
+  y: number,
+): void {
+  const event = new Event(type, { bubbles: true, cancelable: true })
+  Object.assign(event, { clientX: x, clientY: y, pointerId: 1, button: 0, buttons: 1, pointerType: 'mouse' })
+  target.dispatchEvent(event)
+}
+
+/**
+ * 取 React 渲染出来的 `.fab-root`：位置写在这个元素上。
+ *
+ * 注意 `floatingRoots()` 拿到的是宿主容器 div（`data-dsh-qiniu-usage-root`），
+ * React 的浮层是它的**子元素**。
+ */
+function fabRootElement(): HTMLElement {
+  const element = fabRootOrNull()
+  assert.ok(element !== null, '应有 fabRoot 元素')
+  return element
+}
+
+/**
+ * 同上，但没渲染好时返回 null。
+ *
+ * `waitFor` 的判定里**不能**用会抛异常的版本：容器是先挂到 DOM、React 再往里渲染的，
+ * 两者之间有一个空窗期，抛异常会让轮询变成偶发失败。
+ */
+function fabRootOrNull(): HTMLElement | null {
+  const element = floatingRoots()[0]?.firstElementChild
+  return element instanceof HTMLElement ? element : null
+}
+
+/** 取悬浮按钮（弹层里也有 button，必须按语义选）。 */
+function fabButton(): Element {
+  const root = floatingRoots()[0]
+  assert.ok(root !== undefined, '应先有悬浮根容器')
+  const button = root.querySelector('button[aria-haspopup="dialog"]')
+  assert.ok(button !== null, '应有悬浮按钮')
+  return button
+}
 
 describe('悬浮按钮 · 挂载', () => {
   it('挂到 document.body 的独立容器上，并带 data-dsh-plugin 供宿主隐藏', async () => {
@@ -174,8 +255,7 @@ describe('悬浮按钮 · 挂载', () => {
     }
   })
 
-  it('重复挂载不会产生第二个容器（热重载安全）', async () => {
-    const { ctx } = makeCtx()
+  it('重复挂载不会产生第二个容器（热重载安全）', async () => {    const { ctx } = makeCtx()
     apply(ctx as never)
     await waitFor(() => floatingRoots().length === 1)
 
@@ -253,5 +333,118 @@ describe('悬浮按钮 · 挂载', () => {
     label = 'en'
     for (const listener of localeListeners) listener()
     await waitFor(() => (floatingRoots()[0]?.textContent ?? '').includes('en:'))
+  })
+})
+
+describe('悬浮按钮 · 位置（默认右上角 / 拖拽 / 记忆）', () => {
+  /** jsdom 的视口是 1024×768；按钮放在右上角。 */
+  const TOP_RIGHT = { left: 700, top: 56, width: 160, height: 34 }
+
+  /** 挂载并等位置被"量"成显式坐标。 */
+  async function mountWithRect(): Promise<{ root: Element; fab: HTMLElement }> {
+    installRect(TOP_RIGHT)
+    const { ctx } = makeCtx()
+    apply(ctx as never)
+    await waitFor(() => floatingRoots().length === 1)
+    const root = floatingRoots()[0]
+    assert.ok(root !== undefined)
+    await waitFor(() => fabRootOrNull()?.style.left === '700px')
+    return { root, fab: fabRootElement() }
+  }
+
+  it('默认落在右上角，并把量到的位置固化成坐标', async () => {
+    const { fab: element } = await mountWithRect()
+    assert.equal(element.style.left, '700px')
+    assert.equal(element.style.top, '56px')
+    assert.equal(element.style.right, 'auto', '改用显式坐标后要清掉 CSS 的 right，否则被拉伸')
+  })
+
+  it('拖拽改变位置，并把结果写进 localStorage', async () => {
+    const { fab: element } = await mountWithRect()
+    const button = fabButton()
+
+    pointer(button, 'pointerdown', 710, 66)
+    pointer(button, 'pointermove', 510, 366)
+    pointer(button, 'pointerup', 510, 366)
+
+    await waitFor(() => element.style.left === '500px')
+    assert.equal(element.style.top, '356px', '位移应完全跟手：56 + 300')
+    assert.deepEqual(
+      JSON.parse(window.localStorage.getItem('dsh-qiniu-usage:fab-position') ?? 'null'),
+      { x: 500, y: 356 },
+      '位置应被记住',
+    )
+  })
+
+  it('拖拽不会被当成点击（松手后弹层不会自己开）', async () => {
+    const { root } = await mountWithRect()
+    const button = fabButton()
+
+    pointer(button, 'pointerdown', 710, 66)
+    pointer(button, 'pointermove', 400, 300)
+    pointer(button, 'pointerup', 400, 300)
+    // 浏览器在 pointerup 之后一定会补一个 click —— 它必须被抑制。
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(root.querySelector('[role="dialog"]'), null, '拖完不该顺手打开弹层')
+
+    // 抑制只作用于紧随其后的那一次：下一次点击要照常打开。
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await waitFor(() => root.querySelector('[role="dialog"]') !== null)
+  })
+
+  it('微小手抖（未超过阈值）仍然算点击', async () => {
+    const { root } = await mountWithRect()
+    const button = fabButton()
+
+    pointer(button, 'pointerdown', 710, 66)
+    pointer(button, 'pointermove', 712, 67)
+    pointer(button, 'pointerup', 712, 67)
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+    await waitFor(() => root.querySelector('[role="dialog"]') !== null)
+    assert.equal(fabRootElement().style.left, '700px', '没超过阈值就不该移动')
+  })
+
+  it('重新挂载会恢复到记住的位置（不必再量）', async () => {
+    window.localStorage.setItem('dsh-qiniu-usage:fab-position', '{"x":120,"y":300}')
+    const { ctx } = makeCtx()
+    apply(ctx as never)
+    await waitFor(() => floatingRoots().length === 1)
+
+    const element = fabRootElement()
+    assert.equal(element.style.left, '120px')
+    assert.equal(element.style.top, '300px')
+  })
+
+  it('拖出视口会被钳回可见范围', async () => {
+    const { fab: element } = await mountWithRect()
+    const button = fabButton()
+
+    pointer(button, 'pointerdown', 710, 66)
+    pointer(button, 'pointermove', 5_000, 5_000)
+    pointer(button, 'pointerup', 5_000, 5_000)
+
+    // 1024 - 160 - 8 = 856；768 - 34 - 8 = 726
+    await waitFor(() => element.style.left === '856px')
+    assert.equal(element.style.top, '726px')
+  })
+
+  it('窗口变小后位置被重新钳回，并更新记忆', async () => {
+    const { fab: element } = await mountWithRect()
+
+    const originalWidth = window.innerWidth
+    try {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 320 })
+      window.dispatchEvent(new Event('resize'))
+      // 320 - 160 - 8 = 152
+      await waitFor(() => element.style.left === '152px')
+      assert.deepEqual(
+        JSON.parse(window.localStorage.getItem('dsh-qiniu-usage:fab-position') ?? 'null'),
+        { x: 152, y: 56 },
+      )
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    }
   })
 })

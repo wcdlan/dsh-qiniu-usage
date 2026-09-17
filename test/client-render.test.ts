@@ -375,6 +375,9 @@ describe('面板渲染 · 逐包明细独立成卡片', () => {
 })
 
 describe('悬浮按钮 · 渲染', () => {
+  /** 弹层定位参数：向下、右对齐（右上角按钮的默认展开方向）。 */
+  const DOWN_RIGHT = { placement: { vertical: 'down' as const, align: 'end' as const }, available: 600 }
+
   /** 造一个 store 并驱动到 ready（或 error）。 */
   async function makeStore(options: { failUsage?: boolean } = {}) {
     const { createUsageStore } = await import('../src/client/usage-store.ts')
@@ -399,10 +402,31 @@ describe('悬浮按钮 · 渲染', () => {
     assert.ok(html.includes(translate('qiniu.fab.button')), '应显示按钮文案')
   })
 
+  it('按钮上同时显示用量与当月剩余（余量）', async () => {
+    const store = await makeStore()
+    const html = renderToStaticMarkup(
+      createElement(FloatingUsage, { store, t: translate }),
+    )
+    // fixture 的两个计费项都是 k/tokens：5120 + 32 = 5152 k/tokens = 5.15M tokens
+    assert.ok(html.includes(`${translate('qiniu.fab.remain')} 5.15M`), `按钮应显示余量，实际：${html}`)
+    assert.ok(html.includes(translate('qiniu.fab.remainTitle', { amount: '5.15M tokens' })), '悬停提示应带完整单位')
+    assert.ok(html.includes(cls.fabRemain), '余量应有独立类名（等宽数字）')
+  })
+
+  it('默认右上角：弹层向下、右对齐展开', async () => {
+    const store = await makeStore()
+    const html = renderToStaticMarkup(
+      createElement(FloatingUsage, { store, t: translate, initialOpen: true }),
+    )
+    assert.ok(html.includes('role="dialog"'), '应渲染弹层')
+    assert.ok(html.includes('top:calc(100% + 8px)'), `顶部按钮 → 向下展开，实际：${html.slice(0, 400)}`)
+    assert.ok(html.includes('right:0'), '右半屏 → 右对齐（弹层向左长）')
+  })
+
   it('展开的弹层包含用量、当月资源包与逐包明细三块', async () => {
     const store = await makeStore()
     const html = renderToStaticMarkup(
-      createElement(FloatingPanel, { store, t: translate, onClose: () => {} }),
+      createElement(FloatingPanel, { store, t: translate, onClose: () => {}, rect: DOWN_RIGHT }),
     )
     assert.ok(html.includes('role="dialog"'), '应渲染弹层')
     assert.ok(html.includes(translate('qiniu.usage.heading')), '应含用量块')
@@ -418,7 +442,7 @@ describe('悬浮按钮 · 渲染', () => {
   it('取数失败时弹层给出错误而不是空白', async () => {
     const store = await makeStore({ failUsage: true })
     const html = renderToStaticMarkup(
-      createElement(FloatingPanel, { store, t: translate, onClose: () => {} }),
+      createElement(FloatingPanel, { store, t: translate, onClose: () => {}, rect: DOWN_RIGHT }),
     )
     assert.ok(html.includes(translate('qiniu.error.usage')), '应显示错误标题')
     assert.ok(html.includes('500'), '应带上可定位的状态码')

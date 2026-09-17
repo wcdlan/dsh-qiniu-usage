@@ -88,8 +88,11 @@ export const cls = {
   // 对话页悬浮按钮与弹层
   fabRoot: `${NS}-fab-root`,
   fab: `${NS}-fab`,
+  fabDragging: `${NS}-fab-dragging`,
   fabIcon: `${NS}-fab-icon`,
   fabTotal: `${NS}-fab-total`,
+  fabRemain: `${NS}-fab-remain`,
+  fabSep: `${NS}-fab-sep`,
   popup: `${NS}-popup`,
   popupHead: `${NS}-popup-head`,
   popupTitle: `${NS}-popup-title`,
@@ -415,16 +418,19 @@ export const PANEL_CSS = `
 
 /* ── 对话页悬浮按钮与弹层 ───────────────────────────────
    宿主级浮动 UI：挂在 document.body 的独立 React root 上（不走 slot），
-   因为新会话页没有 session，slot 化会在那里消失。见 FloatingUsage。 */
+   因为新会话页没有 session，slot 化会在那里消失。见 FloatingUsage。
+
+   结构约定：.fabRoot 的**盒子就是按钮的盒子**（唯一的在流子元素是按钮，
+   弹层是 absolute 因此不撑大它）。于是：
+   - 位置 = 根元素的 left/top（拖动后）或 CSS 默认的右上角；
+   - 弹层可以用 top/bottom: calc(100% + 8px) 贴着按钮的四边展开，
+     不必知道按钮的具体尺寸。 */
 .${cls.fabRoot} {
   position: fixed;
+  /* 默认右上角；顶部留 56px 给页面顶栏让位。拖动后由内联样式改成 left/top。 */
+  top: 56px;
   right: 20px;
-  bottom: 88px;
   z-index: 40;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 8px;
   /* 宿主级图层；不拦截下层交互（仅按钮与弹层自身可点） */
   pointer-events: none;
 }
@@ -443,17 +449,35 @@ export const PANEL_CSS = `
   color: ${v('label-primary', 'inherit')};
   font: inherit;
   font-size: 12px;
-  cursor: pointer;
+  cursor: grab;
+  /* 拖动时不要触发页面滚动 / 文字选择（触屏与鼠标一致） */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
   box-shadow: 0 2px 10px rgba(0, 0, 0, .28);
   transition: background-color .16s ease, transform .08s ease;
 }
 .${cls.fab}:hover { background: ${v('button-floating-hover', v('interactive-bg-hover', 'rgba(128,128,128,.16)'))}; }
 .${cls.fab}:active { transform: translateY(.5px); }
 .${cls.fab}:focus-visible { outline: 2px solid ${v('brand-primary', '#4c8dff')}; outline-offset: 2px; }
+.${cls.fabDragging},
+.${cls.fabDragging}:active {
+  cursor: grabbing;
+  transform: none;
+  transition: none;
+}
 .${cls.fabIcon} { display: block; flex: 0 0 auto; opacity: .85; }
-.${cls.fabTotal} { font-variant-numeric: tabular-nums; font-weight: 600; }
+.${cls.fabTotal},
+.${cls.fabRemain} { font-variant-numeric: tabular-nums; font-weight: 600; }
+.${cls.fabSep} { opacity: .4; }
 
 .${cls.popup} {
+  /* 相对 .fabRoot（= 按钮盒子）绝对定位：top/bottom × left/right 由内联样式给，
+     因此既不撑大根元素，也能随按钮位置换边展开。 */
+  position: absolute;
+  /* max-height 是按"按钮到视口边缘的剩余空间"算的，必须是**外框**高度；
+     默认 content-box 会把 30px 内边距加到外面，导致弹层溢出视口。 */
+  box-sizing: border-box;
   /* 460px 时模型名会被截断（数字列占了固定宽度）；520px 够放下常见模型 id */
   width: min(520px, calc(100vw - 40px));
   max-height: min(68vh, 640px);

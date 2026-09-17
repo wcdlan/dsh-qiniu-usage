@@ -82,6 +82,12 @@ function wrapFloatingDocument(floatingHtml) {
   }
   html, body { margin: 0; background: #101014; }
   body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; -webkit-font-smoothing: antialiased; }
+  /* 假顶栏：用来看清悬浮按钮默认的 top:56px 会不会压到顶栏控件 */
+  .topbar { height: 48px; display: flex; align-items: center; gap: 8px; padding: 0 16px;
+            background: #16161a; border-bottom: 1px solid #232329; }
+  .topbarTitle { font-size: 13px; color: var(--dsw-alias-label-primary); }
+  .topbarActions { margin-left: auto; display: flex; gap: 8px; }
+  .ghost { width: 28px; height: 28px; border-radius: 8px; background: var(--dsw-alias-bg-layer-2); }
   .chat { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
   .row { display: flex; }
   .row.right { justify-content: flex-end; }
@@ -90,7 +96,24 @@ function wrapFloatingDocument(floatingHtml) {
   .row.right .bubble { background: #26303f; color: var(--dsw-alias-label-primary); }
 </style>
 </head>
-<body><div class="chat">${bubbles}</div>${floatingHtml}</body>
+<body><pre id="boxdiag" style="position:fixed;left:0;bottom:0;margin:0;padding:2px 6px;background:#000c;color:#8b8b93;font:11px ui-monospace,Menlo,monospace;z-index:99;display:none"></pre><div class="topbar"><span class="topbarTitle">会话标题</span><span class="topbarActions"><span class="ghost"></span><span class="ghost"></span><span class="ghost"></span></span></div><div class="chat">${bubbles}</div>${floatingHtml}<script>
+  // ?diag=1 时把弹层的实际外框打出来 —— 用它核对"弹层有没有溢出视口"。
+  if (location.search.indexOf('diag=1') >= 0) {
+    var box = document.querySelector('.dsh-qiniu-popup');
+    var out = document.getElementById('boxdiag');
+    out.style.display = 'block';
+    if (box) {
+      var r = box.getBoundingClientRect();
+      out.textContent = 'popup L' + Math.round(r.left) + ' T' + Math.round(r.top)
+        + ' R' + Math.round(r.right) + ' B' + Math.round(r.bottom)
+        + ' (' + Math.round(r.width) + 'x' + Math.round(r.height) + ')'
+        + ' | viewport ' + window.innerWidth + 'x' + window.innerHeight;
+    } else {
+      out.textContent = 'no popup';
+    }
+  }
+</script>
+</body>
 </html>
 `
 }

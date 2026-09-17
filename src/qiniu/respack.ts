@@ -193,6 +193,32 @@ export function ratio(used: number, capacity: number): number {
   return Math.min(Math.max(used / capacity, 0), 1)
 }
 
+/**
+ * 汇总"当月剩余"额度，用于悬浮按钮上的速览。
+ *
+ * **按单位分组后再求和**：不同单位的数值不能相加（`k/tokens` 与 `GB` 加在一起
+ * 没有意义），所以只报**剩余量最大**的那一组，并在返回值里带上单位原文。
+ * 面板里仍然逐项列出，不受这个汇总影响。
+ *
+ * @param items - `month-overview` 归一后的计费项。
+ * @returns 剩余量与单位；没有计费项时返回 `undefined`。
+ */
+export function sumMonthRemain(
+  items: { monthRemain: number; unit: string }[],
+): { value: number; unit: string } | undefined {
+  if (items.length === 0) return undefined
+  const byUnit = new Map<string, number>()
+  for (const item of items) {
+    const remain = Number.isFinite(item.monthRemain) ? item.monthRemain : 0
+    byUnit.set(item.unit, (byUnit.get(item.unit) ?? 0) + remain)
+  }
+  let best: { value: number; unit: string } | undefined
+  for (const [unit, value] of byUnit) {
+    if (best === undefined || value > best.value) best = { value, unit }
+  }
+  return best
+}
+
 /** 归一一条 month-overview 记录。 */
 export function normalizeMonthItem(raw: RawRespackMonthItem): RespackMonthItem {
   const monthCapacity = toNumber(raw.total_surplus)

@@ -103,6 +103,9 @@ export const zh = {
   'qiniu.fab.close': '关闭',
   'qiniu.fab.reload': '刷新',
   'qiniu.fab.hint': '完整面板与凭据配置见「设置 → 七牛云用量」。',
+  'qiniu.fab.remain': '余',
+  'qiniu.fab.remainTitle': '资源包当月剩余 {amount}',
+  'qiniu.fab.dragHint': '按住可拖动，位置会记住',
 
   // 状态
   'qiniu.empty.noUsage': '当日没有用量记录',
@@ -207,6 +210,9 @@ export const en: LocaleDictOf<typeof NS> = {
   'qiniu.fab.close': 'Close',
   'qiniu.fab.reload': 'Refresh',
   'qiniu.fab.hint': 'The full panel and credential setup live under Settings → Qiniu Usage.',
+  'qiniu.fab.remain': 'left',
+  'qiniu.fab.remainTitle': '{amount} left in resource packs this month',
+  'qiniu.fab.dragHint': 'Drag to move; the position is remembered',
 
   'qiniu.empty.noUsage': 'No usage recorded for this day',
   'qiniu.empty.noRespack': 'This account has no resource packs',
