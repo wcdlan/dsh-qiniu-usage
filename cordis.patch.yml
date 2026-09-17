@@ -1,0 +1,12 @@
+# dsh-qiniu-usage bundle layer.
+#
+# 插入插件行。浏览器半区会被自动发现：dsh web shell 的 client-modules 会扫描
+# 已启用的 Loader 条目，找到带 web `dsh.client` 声明的包，并把其构建产物
+# `exports["./client"]` 挂到 /plugins/<id>/client.js —— 不需要重建 web-app。
+#
+# 本文件被 package.json 的 dsh.bundle.patch 引用；`dsh plugin --profile web add`
+# 检测到该声明后会把本包自动加进 profile 的 dsh.profile.bundles，无需手工编辑
+# profile 的 patch 层。
+- insert:
+    - id: qiniu-usage
+      name: dsh-qiniu-usage

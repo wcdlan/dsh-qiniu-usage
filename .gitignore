@@ -3,6 +3,10 @@ lib/
 dist/
 *.tsbuildinfo
 
+# local build/install caches and scratch space
+.tmp/
+*.tgz
+
 # local env / credentials — never commit
 .env
 .env.*

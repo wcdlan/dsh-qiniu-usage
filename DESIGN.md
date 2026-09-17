@@ -248,11 +248,12 @@ export function apply(ctx, config) {
     "platform": "web",
     // 语义是「包名」，不是服务名：client-modules 拿每项去 graphRows.get(packageName)
     // 查图，查不到就静默跳过（dsh-client-modules/lib/client.js:265）。可省略。
+    // 注意：没有 @deepseek-ai/dsh-client-ui-slots 这个包 —— slots 服务由
+    // @deepseek-ai/dsh-client-ui-renderer 提供（它导出 SlotComponent 等类型）。
     "inject": [
       "@deepseek-ai/dsh-client-connection",
       "@deepseek-ai/dsh-client-locale",
       "@deepseek-ai/dsh-client-ui-settings",
-      "@deepseek-ai/dsh-client-ui-slots",
       "@deepseek-ai/dsh-client-ui-renderer"
     ]
   }
@@ -637,15 +638,18 @@ const Config = z.object({
 ### 12.1 验证方式
 
 - **单元测试**（vitest，不依赖外网）：签名固定向量、3 种用量响应形态、2 种资源包响应、错误码映射、缓存/single-flight 行为。
+- **产物契约测试**（`test/bundle.test.ts`）：把"空插件能被 `dsh web` 加载"这条验收标准落到可在 CI 跑的断言上 —— 宿主产物必须导出 `name`/`inject`/`apply`/`Config`，客户端产物必须在受控 `vm` 上下文里注册 `__ModuleLoader__` 并交出 `apply`/`inject`，且源码里不得出现任何凭据读取路径。
 - **联调脚本**：`scripts/smoke.mjs`，AK/SK 从环境变量读，打印归一后的快照；永不写入仓库。
 - **安装流程**：
   ```bash
-  cd ~/.dsh/profiles/web
   dsh plugin --profile web add link:~/dsh-plugins/dsh-qiniu-usage
-  # 在 cordis.patch.yml 或 dsh.profile.bundles 里挂上 qiniu-usage 行
-  # 宿主半区改动 → 重启 dsh web；客户端半区改动 → 重新 build 后刷新页面
   ```
-  profile 的 `patchReload: live` 只对 patch 文件生效，宿主代码改动仍建议重启。
+  已核对 CLI 实现（`lib/plugin-*.js`）：`dsh plugin add` 会检测依赖是否声明
+  `dsh.bundle.patch`，**自动**把该包写进 profile 的 `dsh.profile.bundles`，
+  **不需要**手工编辑 profile 的 patch 层。之后：
+  - 宿主半区改动 → 重启 `dsh web`
+  - 客户端半区改动 → 重新 `build` 后刷新页面
+  - profile 的 `patchReload: live` 只对 patch 文件生效，宿主代码改动仍建议重启。
 
 ### 12.2 Definition of Done
 
@@ -698,12 +702,13 @@ const Config = z.object({
 ## 14. 附录：实现检查清单
 
 **签名器**
-- [ ] `Host` 不含端口
-- [ ] query 串只构造一次，签名与请求共用
-- [ ] `+08:00` 编码为 `%2B08:00`
-- [ ] GET 不带 `Content-Type`
-- [ ] `urlsafe_base64` 保留 `=` 填充
-- [ ] 固定向量测试通过
+- [x] `Host` 不含端口
+- [x] query 串只构造一次，签名与请求共用
+- [x] `+08:00` 编码为 `%2B08:00`
+- [x] GET 不带 `Content-Type`
+- [x] `urlsafe_base64` 保留 `=` 填充
+- [x] 固定向量测试通过
+- [x] body 仅在设置了 `Content-Type` 且非 `application/octet-stream` 时参与签名
 
 **用量归一**
 - [ ] Bearer 形态（`data[] = models[]`）
@@ -729,8 +734,67 @@ const Config = z.object({
 - [ ] 卸载时 dispose 路由与定时器
 
 **客户端**
-- [ ] `settings.section` order 152
+- [x] `settings.section` order 152
 - [ ] 轮询挂载周期，关页零请求
 - [ ] 凭据表单提交后清空、只回显 describe
 - [ ] 空/错/加载三态齐备
 - [ ] 只用主题 token 配色
+
+---
+
+## 15. M0 实现记录：文档没预见到、但真会卡住的四点
+
+以下都是 M0 落地时由编译器/测试**当场抓出来**的，已写进代码与测试；记录在此，
+供 M1–M5 复用，避免重复踩。
+
+### 15.1 Base64URL 必须保留 `=` —— 否则所有请求 401
+
+七牛的 `encodedSign` 带 `=` 填充（官方固定向量以 `=` 结尾）。而 Node 的
+`Buffer#toString('base64url')` **会剥掉填充**，两者是不同字符串：
+
+```
+Buffer#toString('base64url')  →  1uLvuZM6l6oCzZFqkJ6oI4oFMVQ    （错）
+七牛要求                        →  1uLvuZM6l6oCzZFqkJ6oI4oFMVQ=   （对）
+```
+
+正确做法是走 base64 再手工替换字符：`+` → `-`、`/` → `_`，`=` 原样保留。
+`test/sign.test.ts` 里有一条"回归：Node 的 base64url 会剥掉 =，不能直接使用"
+专门钉住这个差异。
+
+### 15.2 `LocaleNamespaceMap` 必须声明合并，否则客户端编译失败
+
+`ctx.locale.register(NS, ...)` / `ctx.locale.bind(NS)` 的参数类型是
+`Extract<keyof LocaleNamespaceMap, string>`，不是 `string`。不注册命名空间会得到
+`Type '"dsh-qiniu-usage"' is not assignable to parameter of type 'keyof LocaleNamespaceMap'`。
+
+必须在自己包的 locales 模块里 merge：
+
+```ts
+declare module '@deepseek-ai/dsh-client-ui-slots' {
+  interface LocaleNamespaceMap { 'dsh-qiniu-usage': keyof typeof zh }
+}
+```
+
+配套用 `LocaleDictOf<typeof NS>` 约束 `en`，让双语键集不一致时**编译期**报错
+而不是界面上露空文案。
+
+### 15.3 `settings.section` 的 `inject` 是必填的
+
+`sections.register` 的类型要求 options 里必须有 `inject: (actions) => object`，
+即使面板当前不消费注入面也得给（`inject: () => ({})`）。组件本身要返回
+`ReactNode`，返回 `unknown` 会以 "Type 'unknown' is not assignable to type
+'ReactNode'" 的形式报在 register 的调用点上，不好定位。
+
+### 15.4 构建工具链：esbuild + 手写 ModuleLoader 外壳
+
+`tsdown` 的 output 形态无法直接产出 `window.__ModuleLoader__.load({...})`，
+且参考包**都没发布构建配置**。M0 的解法是用 esbuild（打成 CJS）+ 一个薄包装
+（`scripts/build.mjs`），并**在构建后自检 7 项契约**（`verifyClientBundle`），
+形态一旦漂移就让构建失败，而不是等到浏览器里才发现。
+
+宿主半区则相反：对照参考产物确认其**无任何外部 `require`**，因此 esbuild 用
+`external: []` 打成自包含 ESM，避免在 profile 环境里因依赖解析失败而装不上。
+
+产物体积对照：本插件客户端 bundle **4.5 KB**（dsh-usage 为 374 KB）—— 面板只做
+表格与进度条，样式只用主题 token，这个量级是合理的。
+
