@@ -27,6 +27,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const tmp = resolve(root, '.tmp')
 const bundlePath = resolve(tmp, 'preview.bundle.mjs')
 const htmlPath = resolve(tmp, 'preview.html')
+const floatingHtmlPath = resolve(tmp, 'preview-floating.html')
 
 /** 把预览入口打成 Node 可执行的 ESM（react 走 node_modules，不打进包）。 */
 async function buildPreview() {
@@ -41,6 +42,56 @@ async function buildPreview() {
     external: ['react', 'react-dom', 'react-dom/server'],
     logLevel: 'warning',
   })
+}
+
+/**
+ * 对话页视图：给浮层一个"聊天内容"背景，才能看清它压在上面是否可读。
+ *
+ * @param floatingHtml - 浮层的静态 HTML。
+ * @returns 完整 HTML 文档。
+ */
+function wrapFloatingDocument(floatingHtml) {
+  const bubbles = Array.from({ length: 14 }, (_, index) => {
+    const side = index % 2 === 0 ? 'left' : 'right'
+    const width = 40 + ((index * 17) % 45)
+    return `<div class="row ${side}"><div class="bubble" style="width:${width}%">`
+      + '这里是对话内容，用来检验浮层压在其上的可读性与层次。'.repeat(index % 3 === 0 ? 1 : 2)
+      + '</div></div>'
+  }).join('')
+
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dsh-qiniu-usage 预览（对话页浮层）</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --dsw-alias-label-primary: #e8e8ea; --dsw-alias-label-secondary: #b9b9bf;
+    --dsw-alias-label-tertiary: #8b8b93; --dsw-alias-label-caption: #7a7a82;
+    --dsw-alias-bg-base: #16161a; --dsw-alias-bg-layer-1: #1d1d22;
+    --dsw-alias-bg-layer-2: #232329; --dsw-alias-bg-layer-3: #2c2c34;
+    --dsw-alias-bg-overlay: #202027;
+    --dsw-alias-border-l1: #2a2a31; --dsw-alias-border-l2: #383842; --dsw-alias-border-l3: #44444f;
+    --dsw-alias-interactive-bg-hover: #2a2a32;
+    --dsw-alias-state-business-primary: #4c8dff; --dsw-alias-state-warn-primary: #e0a03a;
+    --dsw-alias-state-error-primary: #f0635f;
+    --dsw-alias-brand-primary: #4c8dff;
+    --dsw-alias-button-floating-fill: #24242c; --dsw-alias-button-floating-hover: #2c2c36;
+  }
+  html, body { margin: 0; background: #101014; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; -webkit-font-smoothing: antialiased; }
+  .chat { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+  .row { display: flex; }
+  .row.right { justify-content: flex-end; }
+  .bubble { padding: 10px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.6;
+            background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-secondary); }
+  .row.right .bubble { background: #26303f; color: var(--dsw-alias-label-primary); }
+</style>
+</head>
+<body><div class="chat">${bubbles}</div>${floatingHtml}</body>
+</html>
+`
 }
 
 /** 包一层宿主设置页那样的容器，颜色用中性值近似宿主主题。 */
@@ -129,6 +180,10 @@ async function main() {
   const panelHtml = await mod.renderPanel()
   await writeFile(htmlPath, wrapDocument(panelHtml), 'utf8')
   console.log(`预览已生成：${htmlPath}`)
+
+  const floatingHtml = await mod.renderFloating()
+  await writeFile(floatingHtmlPath, wrapFloatingDocument(floatingHtml), 'utf8')
+  console.log(`预览已生成：${floatingHtmlPath}`)
   process.exit(0)
 }
 

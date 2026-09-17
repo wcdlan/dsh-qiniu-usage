@@ -21,6 +21,8 @@ import { describe, it } from 'vitest'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { UsageSection, type UsageSectionProps } from '../src/client/UsageSection.tsx'
+import { FloatingPanel, FloatingUsage } from '../src/client/FloatingUsage.tsx'
+import { cls } from '../src/client/styles.ts'
 import { zh } from '../src/client/locales.ts'
 import { createUsageStore } from '../src/client/usage-store.ts'
 import { CredentialAccess } from '../src/credentials.ts'
@@ -245,5 +247,98 @@ describe('面板渲染 · 三态', () => {
   it('无数据渲染空状态而不是崩', async () => {
     const html = await renderSection({ emptyUsage: true })
     assert.ok(html.includes('当日没有用量记录'), `应渲染空状态，实际：${html.slice(0, 300)}`)
+  })
+})
+
+describe('面板渲染 · 逐包明细独立成卡片', () => {
+  /** 按卡片切开 HTML，便于断言"某内容属于哪张卡"。 */
+  function cards(html: string): string[] {
+    return html.split(`class="${cls.card}"`).slice(1)
+  }
+
+  it('当月资源包与逐包明细是两张不同的卡片', async () => {
+    const html = await renderSection()
+    const sections = cards(html)
+
+    const monthCard = sections.find((chunk) => chunk.includes('资源包利用情况'))
+    const packsCard = sections.find((chunk) => chunk.includes('逐包明细'))
+
+    assert.ok(monthCard !== undefined, '应存在「资源包利用情况」卡片')
+    assert.ok(packsCard !== undefined, '应存在「逐包明细」卡片')
+    assert.notEqual(monthCard, packsCard, '两者必须是不同的卡片')
+  })
+
+  it('当月卡片只放当月计费项，不放逐包条目', async () => {
+    const sections = cards(await renderSection())
+    const monthCard = sections.find((chunk) => chunk.includes('资源包利用情况'))
+    assert.ok(monthCard !== undefined)
+    assert.ok(monthCard.includes('AI大模型融合资源包'), '当月计费项应在当月卡片里')
+    assert.ok(
+      !monthCard.includes('中国大陆全时段加速流量5TB'),
+      '逐包条目不应出现在当月卡片里（口径不同，混在一起会读错）',
+    )
+  })
+
+  it('逐包卡片只放逐包条目，并带生命周期口径徽标', async () => {
+    const sections = cards(await renderSection())
+    const packsCard = sections.find((chunk) => chunk.includes('逐包明细'))
+    assert.ok(packsCard !== undefined)
+    assert.ok(packsCard.includes('中国大陆全时段加速流量5TB'), '资源包名应在逐包卡片里')
+    assert.ok(packsCard.includes('生命周期口径'), '逐包卡片应标注口径')
+    assert.ok(
+      !packsCard.includes('AI大模型融合资源包'),
+      '当月计费项不应出现在逐包卡片里',
+    )
+  })
+})
+
+describe('悬浮按钮 · 渲染', () => {
+  /** 造一个 store 并驱动到 ready（或 error）。 */
+  async function makeStore(options: { failUsage?: boolean } = {}) {
+    const { createUsageStore } = await import('../src/client/usage-store.ts')
+    const store = createUsageStore({ fetchImpl: makeClientFetch(options) })
+    store.actions.start()
+    const deadline = Date.now() + 2_000
+    while (Date.now() < deadline) {
+      const status = store.getSnapshot().status
+      if (status === 'ready' || status === 'error') break
+      await new Promise((resolve) => setTimeout(resolve, 2))
+    }
+    return store
+  }
+
+  it('收起状态只渲染悬浮按钮，不渲染弹层', async () => {
+    const store = await makeStore()
+    const html = renderToStaticMarkup(
+      createElement(FloatingUsage, { store, t: translate }),
+    )
+    assert.ok(html.includes('aria-haspopup="dialog"'), '应渲染悬浮按钮')
+    assert.equal(html.includes('role="dialog"'), false, '收起时不应渲染弹层')
+    assert.ok(html.includes(translate('qiniu.fab.button')), '应显示按钮文案')
+  })
+
+  it('展开的弹层包含用量、当月资源包与逐包明细三块', async () => {
+    const store = await makeStore()
+    const html = renderToStaticMarkup(
+      createElement(FloatingPanel, { store, t: translate, onClose: () => {} }),
+    )
+    assert.ok(html.includes('role="dialog"'), '应渲染弹层')
+    assert.ok(html.includes(translate('qiniu.usage.heading')), '应含用量块')
+    assert.ok(html.includes('DeepSeek V4 Pro'), '应含模型名')
+    assert.ok(html.includes(translate('qiniu.respack.heading')), '应含当月资源包块')
+    assert.ok(html.includes(translate('qiniu.respack.packs')), '应含逐包明细块')
+    assert.ok(html.includes('中国大陆全时段加速流量5TB'), '应含资源包名')
+    assert.ok(html.includes(translate('qiniu.fab.hint')), '应提示完整面板的位置')
+    // 单位换算同样适用于浮层
+    assert.ok(!html.includes('k/tokens'), `浮层里也不应出现未换算单位：${html.slice(0, 200)}`)
+  })
+
+  it('取数失败时弹层给出错误而不是空白', async () => {
+    const store = await makeStore({ failUsage: true })
+    const html = renderToStaticMarkup(
+      createElement(FloatingPanel, { store, t: translate, onClose: () => {} }),
+    )
+    assert.ok(html.includes(translate('qiniu.error.usage')), '应显示错误标题')
+    assert.ok(html.includes('500'), '应带上可定位的状态码')
   })
 })

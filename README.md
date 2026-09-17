@@ -18,6 +18,7 @@ A [DSH](https://github.com/deepseek-ai/deepseek-harness) Web GUI plugin that sho
 | Per-model token usage (input / output / total) for a chosen key, today or a past day | `GET https://api.qnaigc.com/v3/stat/usage` |
 | Resource-pack utilisation: this month's capacity / used / remaining per billing item, plus each pack's used amount and expiry | `https://api.qiniu.com/billing-api/v1/respack/*` |
 | AK/SK entry, update and removal from the GUI — secrets never reach the browser | DSH credential store (`ctx.credentials`) |
+| A floating button on the chat page that expands a usage/resource-pack popover | same host routes, fetched only while the popover is open |
 
 ## Install
 
@@ -44,6 +45,7 @@ name), never by value:
 | `apiKeys[]` | `[]` | optional per-key `sk-`/`tk-` tokens for precise single-key queries |
 | `timezone` | `Asia/Shanghai` | upstream only accepts IANA names (`Local` is rejected) |
 | `pollIntervalSec` | `0` | `0` means manual refresh only |
+| `floatingButton` | `true` | show the floating chat-page button; turn it off to keep the panel settings-only |
 
 Two ways to supply the values:
 
@@ -78,6 +80,10 @@ node scripts/preview.mjs
   --force-device-scale-factor=2 --window-size=820,1500 \
   --screenshot="$PWD/.tmp/shot.png" "file://$PWD/.tmp/preview.html?w=820&diag=1"
 ```
+
+`node scripts/preview.mjs` writes two documents: `.tmp/preview.html` (the settings
+panel) and `.tmp/preview-floating.html` (the chat-page popover over sample chat
+content).
 
 `?w=<px>` sets the simulated panel width (use this rather than `--window-size` for
 narrow widths — Chrome clamps its window to ~500px and merely crops the shot, which

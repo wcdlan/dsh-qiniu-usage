@@ -19,9 +19,12 @@ import type {
 } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { SlotComponent } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import { createElement } from 'react'
+import { createRoot } from 'react-dom/client'
 import type { Config } from '../config.ts'
+import { FloatingUsage } from './FloatingUsage.tsx'
 import { NS, en, zh } from './locales.ts'
-import { UsageSection, type UsageSectionFace, type UsageSectionProps } from './UsageSection.tsx'
+import { UsageSection, type UsageSectionFace, type UsageSectionProps , type Translate } from './UsageSection.tsx'
 import { createUsageStore } from './usage-store.ts'
 
 /**
@@ -78,17 +81,36 @@ export function apply(ctx: ClientContext): void {
     settingsScope = undefined
   }
 
-  // 一个 apply body 一个 store；组件挂载/卸载由 store 的 start/stop 管生命周期，
-  // store 本身在会话内保留，因此再次打开设置页能立即渲染上次的数据。
+  /**
+   * 绑定当前语言的翻译函数。
+   *
+   * 设置分区走框架注入的 `t`；悬浮按钮不是 slot 组件，拿不到框架注入，
+   * 必须自己绑定（并在语言切换时重新渲染）。
+   */
+  const boundT = (): Translate => {
+    const bound = ctx.locale.bind(NS)
+    return (key, params) => bound(key as Parameters<typeof bound>[0], params)
+  }
+
+  // 设置面板与悬浮按钮**各用各的 store**：两者的挂载周期不同（设置页开关 vs 浮层展开
+  // 收起），共用一个会让一方的 stop() 掐掉另一方的轮询。上游有宿主缓存与
+  // single-flight 兜着，所以两个 store 不会带来重复请求。
   //
-  // 轮询间隔来自用户配置，而配置是异步同步过来的 —— 所以初始为 0（纯手动），
-  // 待设置作用域给出 `pollIntervalSec > 0` 时按该值重建 store。
-  const store = createUsageStore({ pollIntervalMs: 0 })
+  // 轮询间隔来自用户配置，而配置是异步同步过来的 —— 初始为 0（纯手动），
+  // 待设置作用域给出 `pollIntervalSec > 0` 时再应用。
+  const sectionStore = createUsageStore({ pollIntervalMs: 0 })
+  const fabStore = createUsageStore({ pollIntervalMs: 0 })
+
+  /** 悬浮按钮是否启用（配置缺失时默认开启）。 */
+  const floatingEnabled = (): boolean =>
+    settingsScope?.getSnapshot().value?.floatingButton ?? true
 
   try {
     const applySettings = (): void => {
       const configured = settingsScope?.getSnapshot().value?.pollIntervalSec
-      store.actions.setPollIntervalMs(typeof configured === 'number' ? configured * 1000 : 0)
+      const interval = typeof configured === 'number' ? configured * 1000 : 0
+      sectionStore.actions.setPollIntervalMs(interval)
+      fabStore.actions.setPollIntervalMs(interval)
     }
     applySettings()
     settingsScope?.subscribe(applySettings)
@@ -106,7 +128,7 @@ export function apply(ctx: ClientContext): void {
    * 不是一个 `face` 属性。
    */
   const face = (): UsageSectionFace => ({
-    store,
+    store: sectionStore,
     ...(settingsScope === undefined ? {} : { settings: settingsScope }),
   })
 
@@ -130,4 +152,70 @@ export function apply(ctx: ClientContext): void {
       return () => {}
     }
   })
+
+  // 对话页悬浮按钮：**宿主级 UI**，因此挂 document.body 的独立 React root 而不是 slot
+  // —— 新会话页没有 session，session 作用域的 slot 在那里不会渲染（参考 @linxin666/dsh-pet
+  // 的同款做法）。容器带 data-dsh-plugin，宿主可据此统一隐藏插件浮层。
+  ctx.effect(() => {
+    let root: ReturnType<typeof createRoot> | undefined
+    let container: HTMLDivElement | undefined
+
+    const render = (): void => {
+      root?.render(createElement(FloatingUsage, { store: fabStore, t: boundT() }))
+    }
+
+    const mount = (): void => {
+      if (container !== undefined) return
+      // 清掉上一个 bundle 实例遗留的容器（客户端热重载时可能出现），
+      // 保证整页只有一个悬浮根。
+      for (const stale of Array.from(document.querySelectorAll('div[data-dsh-qiniu-usage-root]'))) {
+        stale.remove()
+      }
+      container = document.createElement('div')
+      container.dataset.dshQiniuUsageRoot = ''
+      container.dataset.dshPlugin = 'qiniu-usage'
+      document.body.appendChild(container)
+      root = createRoot(container)
+      render()
+    }
+
+    const unmount = (): void => {
+      root?.unmount()
+      root = undefined
+      container?.remove()
+      container = undefined
+    }
+
+    /** 配置变化时增删浮层；语言变化时重渲染。 */
+    const sync = (): void => {
+      if (floatingEnabled()) mount()
+      else unmount()
+      render()
+    }
+
+    sync()
+    const disposers: (() => void)[] = []
+    try {
+      const offSettings = settingsScope?.subscribe(sync)
+      if (offSettings !== undefined) disposers.push(offSettings)
+    } catch {
+      // 设置不可订阅时只在启动期决定一次。
+    }
+    try {
+      disposers.push(ctx.locale.subscribe(render))
+    } catch {
+      // 语言不可订阅时保持启动期语言。
+    }
+
+    return () => {
+      for (const dispose of disposers) {
+        try {
+          dispose()
+        } catch {
+          // fiber 已销毁。
+        }
+      }
+      unmount()
+    }
+  }, 'dsh-qiniu-usage: floating button')
 }

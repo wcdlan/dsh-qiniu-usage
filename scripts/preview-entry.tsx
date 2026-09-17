@@ -11,6 +11,7 @@
 
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { FloatingUsage } from '../src/client/FloatingUsage.tsx'
 import { UsageSection } from '../src/client/UsageSection.tsx'
 import { zh } from '../src/client/locales.ts'
 import { createUsageStore } from '../src/client/usage-store.ts'
@@ -164,12 +165,56 @@ const RESPACK: NonNullable<OverviewPayload['respack']> = {
   warnings: [],
 }
 
+/** 造一个已就绪的 store（预览与浮层共用）。 */
+async function makeReadyStore(): Promise<ReturnType<typeof createUsageStore>> {
+  const store = createUsageStore({ fetchImpl: makePreviewFetch() })
+  store.actions.start()
+  store.actions.loadCredentials()
+  const deadline = Date.now() + 2_000
+  while (Date.now() < deadline) {
+    const status = store.getSnapshot().status
+    if (status === 'ready' || status === 'error') break
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  while (Date.now() < deadline && store.getSnapshot().credentials === null) {
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  return store
+}
+
 /** 凭据状态（真实场景：凭据库可用但未配置）。 */
 const CREDENTIALS = {
   accessKey: { ref: 'QINIU_ACCESS_KEY', configured: true, source: 'file', writable: true },
   secretKey: { ref: 'QINIU_SECRET_KEY', configured: true, source: 'file', writable: true },
   apiKeys: [],
   hasStore: true,
+}
+
+/** 预览用的 fetch 替身（返回宿主 `/overview` 等路由的载荷）。 */
+function makePreviewFetch(): typeof fetch {
+  return (async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), 'http://localhost')
+    const body = url.pathname.endsWith('/credentials')
+      ? { ok: true, credentials: CREDENTIALS }
+      : url.pathname.endsWith('/keys')
+        ? { keys: [] }
+        : makePayload()
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }) as typeof fetch
+}
+
+/** 预览用的宿主载荷。 */
+function makePayload(): OverviewPayload {
+  return {
+    ok: true,
+    usage: USAGE,
+    respack: RESPACK,
+    errors: [],
+    fetchedAt: new Date().toISOString(),
+  }
 }
 
 /**
@@ -202,23 +247,19 @@ export async function renderPanel(): Promise<string> {
     })
   }) as typeof fetch
 
-  const store = createUsageStore({ fetchImpl })
-  store.actions.start()
-  store.actions.loadCredentials()
-
-  // 把 store 推到 ready / error（真实运行由组件的 effect 驱动）。
-  const deadline = Date.now() + 2_000
-  while (Date.now() < deadline) {
-    const status = store.getSnapshot().status
-    if (status === 'ready' || status === 'error') break
-    await new Promise((resolve) => setTimeout(resolve, 5))
-  }
-  // 凭据状态也要等到位，否则预览里凭据卡片是空壳。
-  while (Date.now() < deadline && store.getSnapshot().credentials === null) {
-    await new Promise((resolve) => setTimeout(resolve, 5))
-  }
-
+  void payload
+  const store = await makeReadyStore()
   return renderToStaticMarkup(createElement(UsageSection, { store, t }))
+}
+
+/**
+ * 渲染"展开的悬浮按钮"为 HTML 片段（对话页视图用）。
+ *
+ * @returns 浮层静态 HTML。
+ */
+export async function renderFloating(): Promise<string> {
+  const store = await makeReadyStore()
+  return renderToStaticMarkup(createElement(FloatingUsage, { store, t, initialOpen: true }))
 }
 
 export { t as translate }

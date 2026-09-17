@@ -94,6 +94,15 @@ export const zh = {
     '宿主侧没有可用的凭据库，插件降级为环境变量直读；请在环境变量里设置下方两个名字，界面无法写入。',
   'qiniu.credentials.unavailable': '暂时读不到凭据状态。',
 
+  'qiniu.respack.packsCount': '{count} 个资源包',
+
+  // 对话页悬浮按钮
+  'qiniu.fab.button': '用量',
+  'qiniu.fab.open': '查看七牛云用量',
+  'qiniu.fab.close': '关闭',
+  'qiniu.fab.reload': '刷新',
+  'qiniu.fab.hint': '完整面板与凭据配置见「设置 → 七牛云用量」。',
+
   // 状态
   'qiniu.empty.noUsage': '当日没有用量记录',
   'qiniu.empty.noRespack': '账号下没有资源包',
@@ -186,6 +195,14 @@ export const en: LocaleDictOf<typeof NS> = {
   'qiniu.credentials.noStoreHint':
     'The host has no credential store available, so the plugin falls back to reading environment variables. Set the two names below in the environment; the UI cannot write them.',
   'qiniu.credentials.unavailable': 'Credential status is unavailable right now.',
+
+  'qiniu.respack.packsCount': '{count} packs',
+
+  'qiniu.fab.button': 'Usage',
+  'qiniu.fab.open': 'Show Qiniu usage',
+  'qiniu.fab.close': 'Close',
+  'qiniu.fab.reload': 'Refresh',
+  'qiniu.fab.hint': 'The full panel and credential setup live under Settings → Qiniu Usage.',
 
   'qiniu.empty.noUsage': 'No usage recorded for this day',
   'qiniu.empty.noRespack': 'This account has no resource packs',

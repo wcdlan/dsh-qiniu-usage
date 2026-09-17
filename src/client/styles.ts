@@ -84,6 +84,17 @@ export const cls = {
   detail: `${NS}-detail`,
   detailTable: `${NS}-detail-table`,
   warnList: `${NS}-warn-list`,
+
+  // 对话页悬浮按钮与弹层
+  fabRoot: `${NS}-fab-root`,
+  fab: `${NS}-fab`,
+  fabIcon: `${NS}-fab-icon`,
+  fabTotal: `${NS}-fab-total`,
+  popup: `${NS}-popup`,
+  popupHead: `${NS}-popup-head`,
+  popupTitle: `${NS}-popup-title`,
+  popupBody: `${NS}-popup-body`,
+  popupFoot: `${NS}-popup-foot`,
 } as const
 
 /** 主题 token 的简写读取（每个都带兜底值）。 */
@@ -396,9 +407,86 @@ export const PANEL_CSS = `
 /* ── 告警清单 ───────────────────────────────────────── */
 .${cls.warnList} { display: flex; flex-direction: column; gap: 3px; }
 
+/* ── 对话页悬浮按钮与弹层 ───────────────────────────────
+   宿主级浮动 UI：挂在 document.body 的独立 React root 上（不走 slot），
+   因为新会话页没有 session，slot 化会在那里消失。见 FloatingUsage。 */
+.${cls.fabRoot} {
+  position: fixed;
+  right: 20px;
+  bottom: 88px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  /* 宿主级图层；不拦截下层交互（仅按钮与弹层自身可点） */
+  pointer-events: none;
+}
+.${cls.fabRoot} > * { pointer-events: auto; }
+
+.${cls.fab} {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 13px;
+  border-radius: 999px;
+  border: 1px solid ${v('border-l2', 'rgba(128,128,128,.35)')};
+  /* 宿自带的浮动按钮底色，保证与原生浮动控件一致 */
+  background: ${v('button-floating-fill', v('bg-layer-1', '#1d1d22'))};
+  color: ${v('label-primary', 'inherit')};
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .28);
+  transition: background-color .16s ease, transform .08s ease;
+}
+.${cls.fab}:hover { background: ${v('button-floating-hover', v('interactive-bg-hover', 'rgba(128,128,128,.16)'))}; }
+.${cls.fab}:active { transform: translateY(.5px); }
+.${cls.fab}:focus-visible { outline: 2px solid ${v('brand-primary', '#4c8dff')}; outline-offset: 2px; }
+.${cls.fabIcon} { display: block; flex: 0 0 auto; opacity: .85; }
+.${cls.fabTotal} { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+.${cls.popup} {
+  /* 460px 时模型名会被截断（数字列占了固定宽度）；520px 够放下常见模型 id */
+  width: min(520px, calc(100vw - 40px));
+  max-height: min(68vh, 640px);
+  overflow: auto;
+  padding: 14px 16px 16px;
+  border-radius: 12px;
+  border: 1px solid ${v('border-l2', 'rgba(128,128,128,.35)')};
+  background: ${v('bg-overlay', v('bg-layer-1', '#1d1d22'))};
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .34);
+  color: ${v('label-primary', 'inherit')};
+  animation: ${NS}-pop 140ms ease-out;
+  overscroll-behavior: contain;
+}
+.${cls.popupHead} {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid ${v('border-l1', 'rgba(128,128,128,.22)')};
+}
+.${cls.popupTitle} { margin: 0; font-size: 13px; font-weight: 600; }
+.${cls.popupBody} { display: flex; flex-direction: column; gap: 14px; }
+.${cls.popupFoot} {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid ${v('border-l1', 'rgba(128,128,128,.22)')};
+  font-size: 11px;
+  color: ${v('label-caption', 'rgba(128,128,128,.8)')};
+}
+
 @keyframes ${NS}-pulse {
   0%, 100% { opacity: .45; }
   50% { opacity: .9; }
+}
+
+@keyframes ${NS}-pop {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 `
 

@@ -16,10 +16,12 @@
 import { createElement, useEffect, useSyncExternalStore, type ReactNode } from 'react'
 import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { UsageSnapshot } from '../qiniu/usage.ts'
+import type { OverviewPayload } from '../service.ts'
 import type { Config } from '../config.ts'
 import { CredentialsForm } from './CredentialsForm.tsx'
 import { ModelUsageTable } from './ModelUsageTable.tsx'
-import { RespackBars } from './RespackBars.tsx'
+import { RespackMonth } from './RespackMonth.tsx'
+import { RespackPacks } from './RespackPacks.tsx'
 import { formatClock, formatTokens, formatWatermark } from './format.ts'
 import { cls, PANEL_CSS } from './styles.ts'
 import { keyOptions, type UsageStoreView } from './usage-store.ts'
@@ -52,6 +54,9 @@ export interface UsageSectionProps extends UsageSectionFace {
   /** shell 提供的关闭回调（本面板不需要，仅为对齐契约）。 */
   close?: () => void
 }
+
+/** `/overview` 载荷里资源包部分的类型。 */
+type OverviewRespack = NonNullable<OverviewPayload['respack']>
 
 /** 日期选择器的选项值。 */
 const DAY_OPTIONS = ['today', 'yesterday'] as const
@@ -272,7 +277,7 @@ function UsageSectionInner({ store, settings, t }: {
         )
       : null,
 
-    // 资源包卡片
+    // 资源包卡片（当月口径）
     !isInitialLoading && !showOnlyError
       ? createElement(
           'section',
@@ -283,7 +288,30 @@ function UsageSectionInner({ store, settings, t }: {
             createElement('h4', { className: cls.cardTitle }, t('qiniu.respack.heading')),
             createElement('span', { className: cls.badge }, t('qiniu.respack.monthScope')),
           ),
-          renderRespackBlock(store, respack, warnings, t),
+          renderMonthBlock(respack, t),
+        )
+      : null,
+
+    // 逐包明细：**独立卡片**。它是生命周期口径，与上方当月口径是两回事，
+    // 放同一张卡里容易把两种口径读混，也不便于单独定位（设计文档 §3.3）。
+    !isInitialLoading && !showOnlyError
+      ? createElement(
+          'section',
+          { className: cls.card },
+          createElement(
+            'div',
+            { className: cls.cardHead },
+            createElement('h4', { className: cls.cardTitle }, t('qiniu.respack.packs')),
+            createElement('span', { className: cls.badge }, t('qiniu.respack.packLifecycle')),
+            respack === null || respack.packages.length === 0
+              ? null
+              : createElement(
+                  'span',
+                  { className: cls.cardNote },
+                  t('qiniu.respack.packsCount', { count: respack.packages.length }),
+                ),
+          ),
+          renderPacksBlock(store, respack, t),
         )
       : null,
 
@@ -303,6 +331,31 @@ function UsageSectionInner({ store, settings, t }: {
             onSet: (ref: string, value: string) => store.actions.setCredential(ref, value),
             onUnset: (ref: string) => store.actions.unsetCredential(ref),
           }),
+        )
+      : null,
+
+    // 告警：用量与资源包的告警合并放在面板级 —— 原先挂在资源包卡片里，
+    // 导致"用量"的告警出现在资源包区域，归属不清。
+    !isInitialLoading && !showOnlyError && warnings.length > 0
+      ? createElement(
+          'section',
+          { className: cls.card },
+          createElement(
+            'div',
+            { className: cls.cardHead },
+            createElement('h4', { className: cls.cardTitle }, t('qiniu.warnings.heading')),
+          ),
+          createElement(
+            'div',
+            { className: cls.warnList },
+            ...warnings.map((warning, index) =>
+              createElement(
+                'div',
+                { key: `${index}-${warning}`, className: cls.muted, style: { fontSize: '11.5px' } },
+                `· ${warning}`,
+              ),
+            ),
+          ),
         )
       : null,
 
@@ -350,47 +403,30 @@ function renderUsageBlock(usage: UsageSnapshot | null, selectedKey: string, t: T
   return createElement(ModelUsageTable, { models: usage.models, grandTotal: usage.totals.total, t })
 }
 
-/** 资源包块：空状态 / 利用率与逐包。 */
-function renderRespackBlock(
-  store: UsageStoreView,
-  respack: Parameters<typeof RespackBars>[0]['snapshot'] | null,
-  warnings: string[],
+/** 当月口径块：空状态 / 利用率列表。 */
+function renderMonthBlock(
+  respack: OverviewRespack | null,
   t: Translate,
 ): ReactNode {
   if (respack === null) {
     return createElement('div', { className: cls.empty }, t('qiniu.error.respack'))
   }
+  return createElement(RespackMonth, { snapshot: respack, t })
+}
 
-  return createElement(
-    'div',
-    { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
-    createElement(RespackBars, {
-      snapshot: respack,
-      details: store.getSnapshot().details,
-      onLoadDetail: (orderHash: string, poId: number) => store.actions.loadDetail(orderHash, poId),
-      t,
-    }),
-    warnings.length === 0
-      ? null
-      : createElement(
-          'div',
-          { style: { display: 'flex', flexDirection: 'column', gap: '5px' } },
-          createElement(
-            'span',
-            { className: cls.subheadTitle },
-            t('qiniu.warnings.heading'),
-          ),
-          createElement(
-            'div',
-            { className: cls.warnList },
-            ...warnings.map((warning, index) =>
-              createElement(
-                'span',
-                { key: `${index}-${warning}`, className: cls.muted, style: { fontSize: '11px' } },
-                `· ${warning}`,
-              ),
-            ),
-          ),
-        ),
-  )
+/** 逐包明细块：空状态 / 逐包列表。 */
+function renderPacksBlock(
+  store: UsageStoreView,
+  respack: OverviewRespack | null,
+  t: Translate,
+): ReactNode {
+  if (respack === null) {
+    return createElement('div', { className: cls.empty }, t('qiniu.error.respack'))
+  }
+  return createElement(RespackPacks, {
+    snapshot: respack,
+    details: store.getSnapshot().details,
+    onLoadDetail: (orderHash: string, poId: number) => store.actions.loadDetail(orderHash, poId),
+    t,
+  })
 }

@@ -15,6 +15,7 @@
 | 指定 Key 当天（或历史某天）的各模型 Token 用量（输入 / 输出 / 合计） | `GET https://api.qnaigc.com/v3/stat/usage` |
 | 资源包利用情况：当月各计费项可用 / 已用 / 剩余，以及逐包已用量与到期时间 | `https://api.qiniu.com/billing-api/v1/respack/*` |
 | 在 GUI 内填写 / 更新 / 清除 AK/SK，密钥永不进入浏览器 | DSH 凭据库（`ctx.credentials`） |
+| 对话页右下角悬浮按钮，点击展开用量/资源包速览 | 同上（仅在展开时取数） |
 
 ## 安装
 
@@ -39,6 +40,7 @@ dsh plugin --profile web add link:/path/to/dsh-qiniu-usage
 | `apiKeys[]` | `[]` | 可选的单 Key `sk-`/`tk-` token，用于精确查询单个 Key |
 | `timezone` | `Asia/Shanghai` | 上游只接受 IANA 时区名（传 `Local` 会 400） |
 | `pollIntervalSec` | `0` | `0` = 纯手动刷新 |
+| `floatingButton` | `true` | 是否显示对话页悬浮按钮；关掉后只保留设置页面板 |
 
 两种提供值的方式：
 
@@ -60,6 +62,9 @@ npm run build      # lib/index.js、lib/client.js、lib/types/**
 npm run check      # tsc --noEmit
 npm test           # vitest（275 项）
 ```
+
+`node scripts/preview.mjs` 会生成两份文档：`.tmp/preview.html`（设置面板）与
+`.tmp/preview-floating.html`（对话页浮层，带示例对话内容做背景）。
 
 改面板布局时，把它渲染成 HTML 再截图，而不是盲改 CSS：
 

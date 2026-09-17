@@ -48,6 +48,14 @@ export interface Config {
   dashboardTtlSec?: number
   /** 客户端轮询间隔，秒；`0` = 纯手动刷新（默认）。 */
   pollIntervalSec?: number
+
+  /**
+   * 是否在页面上显示悬浮按钮（对话页的用量速览入口）。
+   *
+   * 默认开启：它是这个插件最主要的日常入口。不想要常驻浮层的用户可关掉，
+   * 面板仍在「设置 → 七牛云用量」里。
+   */
+  floatingButton?: boolean
 }
 
 const DEFAULT_USAGE_BASE_URL = 'https://api.qnaigc.com'
@@ -88,6 +96,7 @@ export const Config: z<Config> = z.object({
   todayTtlSec: z.number().min(10).max(600).default(60),
   dashboardTtlSec: z.number().min(60).max(3600).default(600),
   pollIntervalSec: z.number().min(0).max(3600).default(0),
+  floatingButton: z.boolean().default(true),
 })
 
 /** 归一化后的配置：所有字段必有值，且 URL 已去掉尾部 `/`。 */
@@ -104,6 +113,7 @@ export interface ResolvedConfig {
   todayTtlSec: number
   dashboardTtlSec: number
   pollIntervalSec: number
+  floatingButton: boolean
 }
 
 /** 去掉 URL 末尾的 `/`，避免拼接出 `//v3/stat/usage`。 */
@@ -134,5 +144,6 @@ export function resolveConfig(config?: Config): ResolvedConfig {
     todayTtlSec: config?.todayTtlSec ?? 60,
     dashboardTtlSec: config?.dashboardTtlSec ?? 600,
     pollIntervalSec: config?.pollIntervalSec ?? 0,
+    floatingButton: config?.floatingButton ?? true,
   }
 }
