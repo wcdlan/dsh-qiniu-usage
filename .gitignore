@@ -1,0 +1,21 @@
+node_modules/
+lib/
+dist/
+*.tsbuildinfo
+
+# local env / credentials — never commit
+.env
+.env.*
+!.env.example
+.env.local
+*.local
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
