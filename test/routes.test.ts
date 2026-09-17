@@ -760,3 +760,59 @@ describe('路由 · /credentials', () => {
     assert.equal((captured.body as { ok: boolean }).ok, false)
   })
 })
+
+describe('上游 HTTP · 鉴权判定的实测形态', () => {
+  const noSleep = async (): Promise<void> => {}
+  const usageUrl = new URL('https://api.qnaigc.com/v3/stat/usage')
+
+  it('qnaigc 实测形态：HTTP 200 + status:false + error=UNAUTHENTICATED 应判为鉴权失败', async () => {
+    // 这是用真实假凭据打上游得到的响应形态 —— 绝不是 401。
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ status: false, error: 'UNAUTHENTICATED' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })) as typeof fetch
+
+    await assert.rejects(
+      () => fetchUpstreamData({ url: usageUrl }, 'qnaigc', { fetchImpl, sleepImpl: noSleep }),
+      (error: unknown) =>
+        error instanceof QiniuUpstreamError
+        && error.isAuthError
+        && error.code === 'UNAUTHENTICATED'
+        && error.message === 'UNAUTHENTICATED',
+    )
+  })
+
+  it('各类鉴权错误码文本都能识别', async () => {
+    for (const code of ['UNAUTHENTICATED', 'unauthorized', 'Invalid_Credentials']) {
+      const fetchImpl = (async () =>
+        new Response(JSON.stringify({ status: false, error: code }), { status: 200 })) as typeof fetch
+      await assert.rejects(
+        () => fetchUpstreamData({ url: usageUrl }, 'qnaigc', { fetchImpl, sleepImpl: noSleep }),
+        (error: unknown) => error instanceof QiniuUpstreamError && error.isAuthError,
+        `${code} 应判为鉴权失败`,
+      )
+    }
+  })
+
+  it('业务错误不会被误判成鉴权失败', async () => {
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ status: false, error: '时区不支持' }), { status: 200 })) as typeof fetch
+    await assert.rejects(
+      () => fetchUpstreamData({ url: usageUrl }, 'qnaigc', { fetchImpl, sleepImpl: noSleep }),
+      (error: unknown) =>
+        error instanceof QiniuUpstreamError && !error.isAuthError && !error.isForbidden,
+    )
+  })
+
+  it('qiniu 外壳的 PERMISSION_DENIED 判为权限不足', async () => {
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ code: 1013, message: 'PERMISSION_DENIED' }), {
+        status: 200,
+      })) as typeof fetch
+    await assert.rejects(
+      () => fetchUpstreamData({ url: usageUrl }, 'qiniu', { fetchImpl, sleepImpl: noSleep }),
+      (error: unknown) => error instanceof QiniuUpstreamError && error.code === 1013,
+    )
+  })
+})

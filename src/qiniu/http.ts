@@ -77,6 +77,23 @@ const MAX_ERROR_MESSAGE_LENGTH = 300
 export type UpstreamEnvelope = 'qnaigc' | 'qiniu'
 
 /**
+ * 上游业务错误码里表示"凭据无效"的取值。
+ *
+ * **实测发现**：qnaigc 的鉴权失败是 **HTTP 200 + `{status:false, error:"UNAUTHENTICATED"}`**，
+ * 而不是 401。只看 HTTP 状态会把鉴权失败误判成普通业务错误，UI 就不会给出
+ * "AK/SK 无效或已过期"的引导。所以同时按错误码文本判定。
+ */
+const AUTH_ERROR_CODES = new Set([
+  'UNAUTHENTICATED',
+  'UNAUTHORIZED',
+  'INVALID_CREDENTIALS',
+  'AUTHENTICATION_FAILED',
+])
+
+/** 上游业务错误码里表示"权限不足"的取值。 */
+const FORBIDDEN_ERROR_CODES = new Set(['PERMISSION_DENIED', 'FORBIDDEN', 'ACCESS_DENIED'])
+
+/**
  * 截断并清理上游错误信息。
  *
  * 上游偶尔回一整页 HTML（网关错误页），直接透传既难看又可能在界面里渲染。
@@ -138,9 +155,6 @@ export function toUpstreamError(
   status: number,
   parsed: unknown,
 ): QiniuUpstreamError {
-  const isAuthError = status === 401
-  const isForbidden = status === 403
-
   let code: number | string | undefined
   let message: string | undefined
 
@@ -148,6 +162,9 @@ export function toUpstreamError(
     const record = parsed as Record<string, unknown>
     if (envelope === 'qnaigc') {
       if (typeof record.error === 'string') message = record.error
+      // qnaigc 的 `error` 字段同时充当错误码（实测为 `UNAUTHENTICATED`）。
+      if (typeof record.code === 'number' || typeof record.code === 'string') code = record.code
+      else if (typeof record.error === 'string' && record.error !== '') code = record.error
     } else {
       if (typeof record.code === 'number') code = record.code
       else if (typeof record.code === 'string') code = record.code
@@ -158,6 +175,11 @@ export function toUpstreamError(
   if (message === undefined || message === '') {
     message = `上游返回 HTTP ${status}`
   }
+
+  // 鉴权/权限判定：HTTP 状态与业务错误码任一命中即成立。
+  const codeText = typeof code === 'string' ? code.toUpperCase() : ''
+  const isAuthError = status === 401 || AUTH_ERROR_CODES.has(codeText)
+  const isForbidden = status === 403 || FORBIDDEN_ERROR_CODES.has(codeText)
 
   return new QiniuUpstreamError(sanitizeErrorMessage(message), {
     ...(code === undefined ? {} : { code }),
@@ -247,6 +269,9 @@ export async function fetchUpstreamData(
     }
 
     // HTTP 2xx：仍需检查业务外壳。
+    //
+    // **业务错误一律经 toUpstreamError 归一**，不能就地 new —— 否则会绕过鉴权/权限
+    // 判定。实测 qnaigc 的鉴权失败就是 HTTP 200 + status:false + UNAUTHENTICATED。
     if (typeof parsed !== 'object' || parsed === null) {
       throw new QiniuUpstreamError('上游返回了无法解析的响应体', { status: response.status })
     }
@@ -254,22 +279,10 @@ export async function fetchUpstreamData(
 
     if (envelope === 'qnaigc') {
       if (record.status === true) return record.data
-      const message = typeof record.error === 'string' && record.error !== ''
-        ? record.error
-        : '上游返回 status=false 但未给出 error'
-      throw new QiniuUpstreamError(sanitizeErrorMessage(message), { status: response.status })
+      throw toUpstreamError(envelope, response.status, parsed)
     }
 
     if (record.code === 0) return record.data
-    const code = typeof record.code === 'number' || typeof record.code === 'string'
-      ? record.code
-      : undefined
-    const message = typeof record.message === 'string' && record.message !== ''
-      ? record.message
-      : `上游返回 code=${String(code)}`
-    throw new QiniuUpstreamError(sanitizeErrorMessage(message), {
-      ...(code === undefined ? {} : { code }),
-      status: response.status,
-    })
+    throw toUpstreamError(envelope, response.status, parsed)
   }
 }

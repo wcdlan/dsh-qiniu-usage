@@ -4,11 +4,12 @@ A [DSH](https://github.com/deepseek-ai/deepseek-harness) Web GUI plugin that sho
 **Qiniu Cloud (七牛云) token usage per model for a given API key**, plus the
 **account's resource-pack utilisation**, as a section in the settings page.
 
-> **Status: M0 (scaffold) complete.** The signing layer is done and tested against
-> the official fixed vector; the panel is a placeholder. Milestones M1–M5 (usage
-> normalisation, resource packs, UI, credentials form) are tracked in
-> [`DESIGN.md`](./DESIGN.md) — read it before contributing; it is the authoritative
-> design document.
+> **Status: M0–M4 complete; M5 (end-to-end verification with a real account) pending.**
+> Signing, usage normalisation, resource packs, the settings panel and the credential
+> form are all implemented and covered by 238 tests. What has *not* been done is a run
+> against a real Qiniu account — the smoke script below is the tool for that.
+> [`DESIGN.md`](./DESIGN.md) is the authoritative design document; read it before
+> contributing.
 
 ## What it will show
 
@@ -63,7 +64,7 @@ The resource-pack (finance) API only accepts Qiniu **management credentials**
 npm install
 npm run build      # lib/index.js, lib/client.js, lib/types/**
 npm run check      # tsc --noEmit
-npm test           # vitest
+npm test           # vitest (238 tests)
 ```
 
 The build produces two artifacts with different contracts:
@@ -90,3 +91,40 @@ The build produces two artifacts with different contracts:
 ## License
 
 Apache-2.0. See [`LICENSE`](./LICENSE) and [`NOTICE`](./NOTICE).
+
+## Smoke test against a real account
+
+```bash
+export QINIU_ACCESS_KEY=...
+export QINIU_SECRET_KEY=...
+node scripts/smoke.mjs                 # yesterday by default
+node scripts/smoke.mjs --day today
+node scripts/smoke.mjs --key 我的测试Key
+node scripts/smoke.mjs --json          # raw payload
+```
+
+The script reads credentials **only from the environment** and never writes them
+anywhere. It prints the normalised usage and resource-pack snapshot. Exit codes:
+`0` success, `1` upstream/data failure, `2` missing credentials.
+
+This is also the fastest way to verify upstream behaviour: with deliberately fake
+credentials it demonstrates that the usage API reports authentication failure as
+**HTTP 200 + `{"status":false,"error":"UNAUTHENTICATED"}`** rather than a 401 —
+which is why the error classifier keys off the code text as well as the HTTP status.
+
+## Known limitations
+
+- **Zero-usage keys cannot be enumerated.** The upstream usage response only lists
+  keys that had usage in the queried window, so a key with no usage on that day is
+  invisible; register it under `apiKeys[]` in the settings to make it selectable.
+- **`api_key` query filtering is not used.** The parameter's semantics are
+  undocumented, so key selection is done by fetching the whole account and filtering
+  locally.
+- **Today's data is delayed.** The upstream documents this; the panel pins a standing
+  warning and shows the data watermark. Query *yesterday* or an explicit date for
+  trustworthy totals.
+- **Lifetime vs month-to-date scope.** A pack's `used_amount` is lifetime cumulative
+  while `month-overview`'s `month_used` is month-to-date; the panel labels both.
+- **Billing permission.** The finance API needs an AK with billing/IAM financial
+  permission. Without it the resource-pack card shows a targeted hint and the usage
+  half keeps working.
