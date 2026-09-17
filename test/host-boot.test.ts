@@ -67,6 +67,24 @@ function makeWebServerStub(): { service: unknown; routes: WebRoute[]; disposed: 
   } as { service: unknown; routes: WebRoute[]; disposed: number }
 }
 
+/** 最小 IncomingMessage 替身（本文件只走凭据路由，够用即可）。 */
+function makeReq(method: string, body?: unknown): unknown {
+  const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body), 'utf8')
+  return {
+    method,
+    url: '/api/dsh-qiniu-usage/credentials',
+    headers: {
+      host: '127.0.0.1:3080',
+      ...(payload === undefined ? {} : { 'content-type': 'application/json' }),
+    },
+    socket: { remoteAddress: '127.0.0.1' },
+    async *[Symbol.asyncIterator]() {
+      if (payload !== undefined) yield payload
+    },
+    destroy: () => {},
+  }
+}
+
 /** 已挂载的 fiber，测试结束要 dispose（否则 mountOnce 的全局登记会挡住后续用例）。 */
 const mounted: { dispose(): unknown }[] = []
 
@@ -175,6 +193,82 @@ describe('宿主装载 · 走 cordis 的 inject 解析与应用', () => {
     fiber?.dispose()
     await new Promise((resolve) => setTimeout(resolve, 10))
     assert.deepEqual(routes, [], 'fiber 销毁后路由应被 dispose')
+  })
+
+  it('凭据服务晚于插件激活时仍能被识别（惰性解析，真实踩过的坑）', async () => {
+    const { ctx, routes } = await bootPlugin()
+    const credsRoute = routes.find((route) => route.path.endsWith('/credentials'))
+    assert.ok(credsRoute !== undefined)
+
+    /** 调一次 /credentials 并解析响应体。 */
+    const getCredentials = async (): Promise<Record<string, unknown>> => {
+      const captured: { status?: number; body?: unknown } = {}
+      const res = {
+        writeHead: (status: number) => {
+          captured.status = status
+          return res
+        },
+        end: (payload?: string) => {
+          captured.body = payload === undefined ? undefined : JSON.parse(payload)
+        },
+      } as unknown as Parameters<typeof credsRoute.handler>[1]
+      await credsRoute.handler(
+        makeReq('GET') as Parameters<typeof credsRoute.handler>[0],
+        res,
+      )
+      return captured.body as Record<string, unknown>
+    }
+
+    // 插件 apply 时 credentials 还不存在（真实现象：并发应用 + 服务异步激活）
+    const before = (await getCredentials()).credentials as { hasStore: boolean; accessKey: { writable: boolean } }
+    assert.equal(before.hasStore, false, '服务未激活时应报告无凭据库')
+    assert.equal(before.accessKey.writable, false, '无凭据库时表单应只读')
+
+    // 之后才提供 credentials（复刻"提供方 fiber 稍后激活"）
+    const store = { values: {} as Record<string, string>, sets: [] as string[] }
+    const provideDisposer = ctx.provide('credentials', {
+      resolve: async (ref: string) =>
+        store.values[ref] === undefined ? undefined : { value: store.values[ref], source: 'file' },
+      describe: async (ref: string) => ({
+        configured: store.values[ref] !== undefined,
+        writable: true,
+      }),
+      set: async (ref: string, value: string) => {
+        store.sets.push(ref)
+        store.values[ref] = value
+      },
+      unset: async (ref: string) => {
+        delete store.values[ref]
+      },
+    } as never)
+    await new Promise((resolve) => setTimeout(resolve, 30))
+
+    const after = (await getCredentials()).credentials as { hasStore: boolean; accessKey: { writable: boolean } }
+    assert.equal(after.hasStore, true, '服务出现后必须实时识别 —— 不能缓存构造时的 undefined')
+    assert.equal(after.accessKey.writable, true, '有凭据库后表单应变为可写')
+
+    // 写入应真的落到凭据库
+    const captured: { status?: number; body?: unknown } = {}
+    const res = {
+      writeHead: (status: number) => {
+        captured.status = status
+        return res
+      },
+      end: (payload?: string) => {
+        captured.body = payload === undefined ? undefined : JSON.parse(payload)
+      },
+    } as unknown as Parameters<typeof credsRoute.handler>[1]
+    await credsRoute.handler(
+      makeReq('POST', { ref: 'QINIU_ACCESS_KEY', action: 'set', value: 'MY_AK' }) as Parameters<
+        typeof credsRoute.handler
+      >[0],
+      res,
+    )
+    assert.deepEqual(store.sets, ['QINIU_ACCESS_KEY'], '应写入凭据库')
+    assert.equal(store.values.QINIU_ACCESS_KEY, 'MY_AK')
+    assert.ok(!JSON.stringify(captured.body).includes('MY_AK'), '响应不得回显凭据值')
+
+    provideDisposer()
   })
 
   it('缺 settings 服务时走降级路径而不是崩溃', async () => {

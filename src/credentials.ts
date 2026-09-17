@@ -72,34 +72,65 @@ interface CredentialsLike {
   unset(ref: string): Promise<void>
 }
 
+/**
+ * 凭据服务的来源：既可以是服务实例本身，也可以是一个**每次使用时调用的解析器**。
+ *
+ * 解析器形态是必需的，不能省：cordis 的服务是**异步激活**的，而且插件树是
+ * **并发应用**的（`Promise.allSettled`）。`ctx.get(name)` 默认 `strict = true`，
+ * 其内部判定是
+ *
+ * ```js
+ * if (strict && impl.fiber.state !== 2) return;   // 提供方 fiber 必须已激活
+ * ```
+ *
+ * 于是在本插件 `apply` 期间读 `credentials` 会拿到 `undefined`（它的 fiber 还没激活）。
+ * 若把这个 `undefined` 在构造时缓存下来，插件就会**永久**停留在环境变量只读模式 ——
+ * GUI 表单永远置灰，用户无法在界面里填 AK/SK。
+ */
+type CredentialSource = CredentialsLike | (() => CredentialsLike | undefined)
+
 /** 凭据访问器：把"有服务 / 无服务"两种来源统一在同一套方法后面。 */
 export class CredentialAccess {
-  readonly #credentials: CredentialsLike | undefined
+  readonly #source: CredentialSource | undefined
   readonly #env: Record<string, string | undefined>
 
   /**
-   * @param credentials - 宿主凭据服务；缺失时降级到环境变量。
+   * @param source - 宿主凭据服务，或其惰性解析器；缺失时降级到环境变量。
    * @param env - 环境变量表，默认 `process.env`。
    */
-  constructor(credentials?: CredentialsLike, env: Record<string, string | undefined> = process.env) {
-    this.#credentials = credentials
+  constructor(
+    source?: CredentialSource,
+    env: Record<string, string | undefined> = process.env,
+  ) {
+    this.#source = source
     this.#env = env
   }
 
   /**
-   * 从上下文构造。缺 `credentials` 服务时返回环境变量直读的实例。
+   * 从上下文构造。**惰性解析**凭据服务：每次使用时才 `ctx.get('credentials')`，
+   * 因此服务晚于本插件激活时也能被识别。
    *
    * @param ctx - 宿主上下文。
    * @returns 凭据访问器。
    */
   static fromContext(ctx: Context): CredentialAccess {
-    const credentials = ctx.get('credentials') as CredentialsLike | undefined
-    return new CredentialAccess(credentials ?? undefined)
+    return new CredentialAccess(() => ctx.get('credentials') as CredentialsLike | undefined)
   }
 
-  /** 是否由 DSH 凭据库支撑（否则为环境变量直读）。 */
+  /** 当前解析到的凭据服务；没有则 `undefined`（表示降级为环境变量直读）。 */
+  #provider(): CredentialsLike | undefined {
+    const source = this.#source
+    if (source === undefined) return undefined
+    return typeof source === 'function' ? source() : source
+  }
+
+  /**
+   * 是否由 DSH 凭据库支撑（否则为环境变量直读）。
+   *
+   * 这是**实时判定**，不是构造时的快照。
+   */
   get hasStore(): boolean {
-    return this.#credentials !== undefined
+    return this.#provider() !== undefined
   }
 
   /**
@@ -109,9 +140,10 @@ export class CredentialAccess {
    * @returns 值与来源；未配置时为 `undefined`。
    */
   async resolve(ref: CredentialRefName): Promise<{ value: string; source: string } | undefined> {
-    if (this.#credentials !== undefined) {
+    const provider = this.#provider()
+    if (provider !== undefined) {
       try {
-        const resolved = await this.#credentials.resolve(ref)
+        const resolved = await provider.resolve(ref)
         if (resolved !== undefined && resolved.value !== '') return resolved
       } catch {
         // 服务存在但解析失败（引用名不合法等）→ 继续尝试环境变量。
@@ -128,9 +160,10 @@ export class CredentialAccess {
    * @returns 可安全回传浏览器的状态视图。
    */
   async describe(ref: CredentialRefName): Promise<CredentialStatus> {
-    if (this.#credentials !== undefined) {
+    const provider = this.#provider()
+    if (provider !== undefined) {
       try {
-        const info = await this.#credentials.describe(ref)
+        const info = await provider.describe(ref)
         return {
           configured: info.configured,
           ...(info.source === undefined ? {} : { source: info.source }),
@@ -158,10 +191,11 @@ export class CredentialAccess {
    * @throws {Error} 无凭据库，或来源只读遮蔽（由上游服务抛出）。
    */
   async set(ref: CredentialRefName, value: string): Promise<void> {
-    if (this.#credentials === undefined) {
+    const provider = this.#provider()
+    if (provider === undefined) {
       throw new Error('当前没有凭据库可用（插件降级为环境变量直读），无法从界面写入')
     }
-    await this.#credentials.set(ref, value)
+    await provider.set(ref, value)
   }
 
   /**
@@ -171,10 +205,11 @@ export class CredentialAccess {
    * @throws {Error} 无凭据库，或来源只读遮蔽。
    */
   async unset(ref: CredentialRefName): Promise<void> {
-    if (this.#credentials === undefined) {
+    const provider = this.#provider()
+    if (provider === undefined) {
       throw new Error('当前没有凭据库可用（插件降级为环境变量直读），无法从界面清除')
     }
-    await this.#credentials.unset(ref)
+    await provider.unset(ref)
   }
 
   /**
@@ -198,7 +233,7 @@ export class CredentialAccess {
     if (secretKey === undefined) missing.push(secretKeyRef)
     if (accessKey === undefined || secretKey === undefined) {
       // 只读来源下的"缺失"无法通过 GUI 补 —— UI 应改提示去设置环境变量。
-      const readOnly = this.#credentials === undefined
+      const readOnly = this.#provider() === undefined
       throw new MissingCredentialsError(missing, readOnly)
     }
     return {

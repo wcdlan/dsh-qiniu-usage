@@ -903,7 +903,50 @@ handler 内部**（每个 handler 拥有完整的响应生命周期）—— `ds
 
 **教训**：测试若只断言"存在"而不断言"唯一"，就无法覆盖会拒绝重复的注册表。
 
-### 15.7 构建工具链：esbuild + 手写 ModuleLoader 外壳
+### 15.7 ⚠ 服务要惰性解析：`ctx.get()` 默认 strict（第三个真实坑）
+
+启动终于成功、路由也通了之后，实际请求发现：
+
+```json
+{"ok":true,"credentials":{"accessKey":{"configured":false,"writable":false},"hasStore":false}}
+```
+
+`hasStore: false` 意味着插件认为**没有凭据库**，于是 GUI 表单永久置灰 ——
+而"在界面里填 AK/SK"正是本插件的主路径（profile 里明明加载了
+`@deepseek-ai/dsh-credentials-local`）。
+
+**根因在 cordis 的 `ctx.get`**：
+
+```js
+get(name, strict = true) { return getTraceable(this.ctx, this._getImpl(name, strict)?.value) }
+
+_getImpl(name, strict = true) {
+  const impl = key && this.store[key]
+  if (!impl) return
+  if (strict && impl.fiber.state !== 2) return;   // ← 提供方 fiber 必须已激活
+  return impl
+}
+```
+
+而插件树是**并发应用**的（`EntryGroup.update` 用 `Promise.allSettled`），所以本插件
+`apply` 运行时，`credentials` 的 fiber 往往还没激活 → `strict` 判定让它返回
+`undefined`。原实现在**构造时**把这个 `undefined` 缓存进 `CredentialAccess`，
+于是永久停在环境变量只读模式。
+
+**修法**：`CredentialAccess` 接受"服务实例**或解析器**"，`fromContext` 传解析器
+（`() => ctx.get('credentials')`），每次使用时才解析，`hasStore` 也变成实时判定。
+副产品：提供方被替换/重载时不会留陈旧引用。
+
+**教训**：cordis 里**任何服务都不能在 apply 期读取后就长期缓存**。需要可选依赖时，
+要么用 `ctx.inject([...], cb)` 延迟注入，要么每次用时 `ctx.get()`。
+
+**验证方式**：这条只有在**真实启动 + 真实请求**下才暴露 —— 全部单测、产物契约测试、
+甚至"用真 cordis Context 应用一次插件"的测试当时都是绿的。现在补了两层测试：
+`test/credentials.test.ts` 覆盖惰性解析；`test/host-boot.test.ts` 复刻"服务晚于插件
+激活"的时序（先 apply，再 `ctx.provide('credentials', …)`，断言 `hasStore` 翻转且
+写入真的落到凭据库）。
+
+### 15.8 构建工具链：esbuild + 手写 ModuleLoader 外壳
 
 `tsdown` 的 output 形态无法直接产出 `window.__ModuleLoader__.load({...})`，
 且参考包**都没发布构建配置**。M0 的解法是用 esbuild（打成 CJS）+ 一个薄包装
