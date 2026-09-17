@@ -1,12 +1,11 @@
 /**
  * dsh-qiniu-usage 浏览器半区。
  *
- * 只做三件事：注册文案字典、在「使用统计」之后落一个一级设置分区、渲染面板。
+ * 只做四件事：注册文案字典、绑定设置命名空间、落一个一级设置分区、渲染面板。
  * 所有凭据处理与上游调用都在宿主半区完成 —— 这个 bundle 里不存在任何读取
  * AK/SK 的路径（`test/bundle.test.ts` 会断言这一点）。
  *
- * M0 阶段面板是占位卡片，用来验证"客户端半区能被装载、分区能出现在设置页"；
- * 用量表、资源包进度条、Key/日期选择器与凭据表单在 M3/M4 落地。
+ * 轮询与取数都挂在**组件挂载周期**上：设置页关闭 → 零请求。
  *
  * @module dsh-qiniu-usage/client
  */
@@ -14,11 +13,16 @@
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 // 仅类型：拉入 ctx.locale / ctx.slots / ctx.settingsScope / connection 的 Context 合并。
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import type { SlotComponent } from '@deepseek-ai/dsh-client-ui-slots'
+import type {
+  SettingsScope,
+  SettingsScopeSpec,
+} from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { SlotComponent, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import { createElement, type ReactNode } from 'react'
+import type { Config } from '../config.ts'
 import { NS, en, zh } from './locales.ts'
+import { UsageSection, type UsageSectionFace } from './UsageSection.tsx'
+import { createUsageStore } from './usage-store.ts'
 
 /**
  * 必需服务。
@@ -34,47 +38,21 @@ const SECTION_ORDER = 152
 /** 设置命名空间；必须与宿主半区的 `SETTINGS_NAMESPACE` 一致。 */
 const SETTINGS_NS = 'dsh-qiniu-usage'
 
-/** 面板注入面。M3 起会挂上 store、poll、refresh 与 settings scope。 */
-export interface QiniuUsageFace {
-  /** 面板是否已接入真实数据源。 */
-  wired?: boolean
+/** 分区 ID。 */
+const SECTION_ID = 'dsh-qiniu-usage'
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    /**
+     * rc.6 兼容 binder，由 dsh-web-settings 提供；该 group plugin 未安装时缺失，
+     * 因此调用方必须回退到官方 `ctx.settingsScope`。
+     */
+    webUiSettings?: { bind<S>(spec: SettingsScopeSpec<S>): SettingsScope<S> }
+  }
 }
 
-/** 面板属性。 */
-export interface QiniuUsageSectionProps {
-  /** 由 `inject` 提供的注入面。 */
-  face?: QiniuUsageFace
-}
-
-/**
- * 占位面板。
- *
- * 样式只用宿主主题 token（`--dsw-alias-*`），不引 UI 库、不引 Tailwind，
- * 保持与现有设置页一致。
- *
- * @param props - 注入面。
- * @returns 面板元素。
- */
-function QiniuUsageSection({ face }: QiniuUsageSectionProps): ReactNode {
-  const wired = face?.wired === true
-  return createElement(
-    'div',
-    {
-      style: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '6px',
-        padding: '4px 0',
-        color: 'var(--dsw-alias-text-primary, inherit)',
-      },
-    },
-    createElement(
-      'div',
-      { style: { fontSize: '12px', opacity: 0.72, lineHeight: 1.6 } },
-      wired ? '已接入数据源。' : '面板已装载，数据源尚未接入（M0 脚手架阶段）。',
-    ),
-  )
-}
+/** 注入给面板的面的形状（与 {@link UsageSectionFace} 一致，这里再导出一次）。 */
+export type { UsageSectionFace, UsageSectionProps } from './UsageSection.tsx'
 
 /**
  * 客户端插件主体。
@@ -90,19 +68,60 @@ export function apply(ctx: ClientContext): void {
     }
   }, 'dsh-qiniu-usage: dictionaries')
 
+  // 设置作用域：兼容 binder 优先，缺失时回退官方服务。
+  let settingsScope: SettingsScope<Config> | undefined
+  try {
+    const binder = ctx.get('webUiSettings') ?? ctx.settingsScope
+    settingsScope = binder.bind<Config>({ namespace: SETTINGS_NS })
+  } catch {
+    // 设置服务形态存在差异时不致命：面板仍可用，只是读不到用户配置的轮询间隔。
+    settingsScope = undefined
+  }
+
+  // 一个 apply body 一个 store；组件挂载/卸载由 store 的 start/stop 管生命周期，
+  // store 本身在会话内保留，因此再次打开设置页能立即渲染上次的数据。
+  //
+  // 轮询间隔来自用户配置，而配置是异步同步过来的 —— 所以初始为 0（纯手动），
+  // 待设置作用域给出 `pollIntervalSec > 0` 时按该值重建 store。
+  const store = createUsageStore({ pollIntervalMs: 0 })
+
+  try {
+    const applySettings = (): void => {
+      const configured = settingsScope?.getSnapshot().value?.pollIntervalSec
+      store.actions.setPollIntervalMs(typeof configured === 'number' ? configured * 1000 : 0)
+    }
+    applySettings()
+    settingsScope?.subscribe(applySettings)
+  } catch {
+    // 读不到配置就保持纯手动刷新。
+  }
+
+  /**
+   * 注入面工厂。
+   *
+   * `t` 从当前 locale 绑定；每次注入时重新绑定，因此语言切换后面板文案会跟随。
+   */
+  const face = (): UsageSectionFace => {
+    const bound = ctx.locale.bind(NS) as unknown as TranslateNS<typeof NS>
+    return {
+      store,
+      ...(settingsScope === undefined ? {} : { settings: settingsScope }),
+      t: (key, params) => bound(key as Parameters<typeof bound>[0], params),
+    }
+  }
+
   ctx.slots.inject('settings.section', () => {
     try {
       const unregister = ctx.slots.register(
         {
           name: 'settings.section',
-          id: 'dsh-qiniu-usage',
+          id: SECTION_ID,
           order: SECTION_ORDER,
           label: () => ctx.locale.bind(NS)('qiniu.title'),
           locale: NS,
-          // settings.section 的 inject 是必填项；M0 占位面板暂不消费注入面。
-          inject: (): QiniuUsageFace => ({}),
+          inject: face,
         },
-        QiniuUsageSection as SlotComponent<QiniuUsageSectionProps>,
+        UsageSection as SlotComponent<{ face?: UsageSectionFace }>,
       )
       return () => {
         unregister()
