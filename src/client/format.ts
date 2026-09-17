@@ -6,7 +6,7 @@
  * @module dsh-qiniu-usage/client/format
  */
 
-import { unitMultiplier } from '../qiniu/usage.ts'
+import { parseUnit } from '../qiniu/usage.ts'
 
 /** SI 千分进位。 */
 const SI_UNITS = [
@@ -97,11 +97,15 @@ export function convertAmount(
   value: number | undefined,
   unit: string,
 ): { text: string; unitLabel: string } {
-  const multiplier = unitMultiplier(unit)
-  if (multiplier !== undefined && multiplier > 1) {
-    return { text: formatTokens((value ?? 0) * multiplier), unitLabel: 'tokens' }
+  // 空单位表示"上游没给单位" —— 不能替它断言成 tokens，只显示数值。
+  if (unit.trim() === '') return { text: formatTokens(value), unitLabel: '' }
+
+  const parsed = parseUnit(unit)
+  if (parsed === undefined) {
+    // 未识别的单位（如 GB）：不知道它是否自带量级，保持原样 + 紧凑表示。
+    return { text: formatTokens(value), unitLabel: unit }
   }
-  return { text: formatTokens(value), unitLabel: unit }
+  return { text: formatTokens((value ?? 0) * parsed.factor), unitLabel: parsed.label }
 }
 
 /**

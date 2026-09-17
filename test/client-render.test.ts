@@ -85,11 +85,11 @@ async function makePayload(options: { emptyUsage?: boolean } = {}): Promise<Over
   })
   const payload = await service.overview('today', '')
   if (payload.respack !== null) {
-    // 换成 kTokens：验证换算后界面里不再出现 "K kTokens" 这种两套量级叠加的写法。
+    // 换成上游真实的 k/tokens（带斜杠）：验证换算后界面里不再出现两套量级叠加的写法。
     payload.respack = {
       ...payload.respack,
-      items: payload.respack.items.map((item) => ({ ...item, unit: 'kTokens' })),
-      packages: payload.respack.packages.map((pack) => ({ ...pack, unit: 'kTokens' })),
+      items: payload.respack.items.map((item) => ({ ...item, unit: 'k/tokens' })),
+      packages: payload.respack.packages.map((pack) => ({ ...pack, unit: 'k/tokens' })),
     }
   }
   return payload
@@ -192,6 +192,7 @@ describe('面板渲染 · 注入面摊平成 props', () => {
 
     // 单位可读性：上游单位 kTokens 一律换算成 tokens，界面里不应再出现 "K kTokens"。
     // （载荷已被改成 kTokens 单位，所以这两条断言是真的在跑换算路径。）
+    assert.ok(!html.includes('k/tokens'), `界面里不应出现未换算的 k/tokens：${html.slice(0, 300)}`)
     assert.ok(!html.includes('kTokens'), `界面里不应出现未换算的 kTokens：${html.slice(0, 300)}`)
     assert.ok(html.includes('M tokens'), `应显示换算后的 tokens 单位：${html.slice(0, 300)}`)
 

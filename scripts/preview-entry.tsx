@@ -37,30 +37,17 @@ const USAGE: OverviewPayload['usage'] = {
     end: '2026-09-17T12:00:00+08:00',
     timezone: 'Asia/Shanghai',
   },
+  // 取自真实账号的一组数据（单一模型），便于与线上截图逐项对照。
   models: [
     {
       id: 'deepseek/deepseek-v4.1-flash',
       name: 'deepseek/deepseek-v4.1-flash',
       items: [],
-      totalsByKind: { input: 81_550_000, output: 331_870, cachedInput: 12_400_000, cachedWrite: 0, other: 0 },
-      total: 81_881_870,
-    },
-    {
-      id: 'qwen3-max',
-      name: 'qwen3-max',
-      items: [],
-      totalsByKind: { input: 4_210_000, output: 96_400, cachedInput: 0, cachedWrite: 0, other: 0 },
-      total: 4_306_400,
-    },
-    {
-      id: 'moonshot-v1-128k',
-      name: 'moonshot-v1-128k',
-      items: [],
-      totalsByKind: { input: 812_000, output: 41_200, cachedInput: 0, cachedWrite: 0, other: 0 },
-      total: 853_200,
+      totalsByKind: { input: 117_340_000, output: 427_770, cachedInput: 0, cachedWrite: 0, other: 0 },
+      total: 117_767_770,
     },
   ],
-  totals: { input: 86_572_000, output: 469_470, total: 87_041_470 },
+  totals: { input: 117_340_000, output: 427_770, total: 117_767_770 },
   watermark: '2026-09-17T11:00:00+08:00',
   warnings: ['当天数据可能存在延迟（上游按小时粒度返回）'],
   fetchedAt: new Date().toISOString(),
@@ -70,20 +57,21 @@ const USAGE: OverviewPayload['usage'] = {
 const RESPACK: NonNullable<OverviewPayload['respack']> = {
   items: [
     {
-      itemName: 'AI推理大模型系列通用计费项',
+      itemName: 'AI推理大模型可购买系列通用计费项',
       zoneName: '中国大陆',
       availableTime: '全时段',
-      unit: 'kTokens',
+      // 上游真实单位就是带斜杠的 k/tokens（不是 kTokens）
+      unit: 'k/tokens',
       monthCapacity: 75_140,
-      monthUsed: 31_000,
-      monthRemain: 44_140,
-      utilization: 0.4126,
+      monthUsed: 31_580,
+      monthRemain: 43_560,
+      utilization: 0.4203,
     },
     {
       itemName: 'AI推理大模型系列通用计费项',
       zoneName: '中国大陆',
       availableTime: '全时段',
-      unit: 'kTokens',
+      unit: 'k/tokens',
       monthCapacity: 3_000,
       monthUsed: 0,
       monthRemain: 3_000,
@@ -93,7 +81,7 @@ const RESPACK: NonNullable<OverviewPayload['respack']> = {
   packages: [
     {
       name: '国产模型实时推理 5000W',
-      unit: 'kTokens',
+      unit: 'k/tokens',
       status: 2,
       statusLabel: '使用中',
       effectiveStart: '2026-09-01T00:00:00+08:00',
@@ -102,14 +90,14 @@ const RESPACK: NonNullable<OverviewPayload['respack']> = {
       carryOverPolicy: 2,
       carryOverLabel: '一次性分配',
       totalAmount: 50_000,
-      usedAmount: 15_860,
-      utilization: 0.3172,
+      usedAmount: 16_440,
+      utilization: 0.3288,
       orderHash: 'a'.repeat(32),
       poId: 1,
     },
     {
       name: '国产模型实时推理 1000W',
-      unit: 'kTokens',
+      unit: 'k/tokens',
       status: 2,
       statusLabel: '使用中',
       effectiveStart: '2026-09-01T00:00:00+08:00',
@@ -125,7 +113,7 @@ const RESPACK: NonNullable<OverviewPayload['respack']> = {
     },
     {
       name: '【邀请基础奖励】300 万全系列活动限定',
-      unit: 'kTokens',
+      unit: 'k/tokens',
       status: 2,
       statusLabel: '使用中',
       effectiveStart: '2026-09-01T00:00:00+08:00',
@@ -141,7 +129,7 @@ const RESPACK: NonNullable<OverviewPayload['respack']> = {
     },
     {
       name: '实时推理全系列模型 300W（新用户体验包）',
-      unit: 'kTokens',
+      unit: 'k/tokens',
       status: 3,
       statusLabel: '已用完',
       effectiveStart: '2026-08-01T00:00:00+08:00',
@@ -157,7 +145,7 @@ const RESPACK: NonNullable<OverviewPayload['respack']> = {
     },
     {
       name: '国产模型实时推理 1亿',
-      unit: 'kTokens',
+      unit: 'k/tokens',
       status: 3,
       statusLabel: '已用完',
       effectiveStart: '2026-06-01T00:00:00+08:00',

@@ -14,6 +14,7 @@ import {
   itemTotalRaw,
   maskApiKey,
   normalizeUsage,
+  parseUnit,
   unitMultiplier,
 } from '../src/qiniu/usage.ts'
 import {
@@ -96,6 +97,41 @@ describe('用量归一 · 单位换算以 unit 为权威', () => {
     assert.equal(unitMultiplier('millionToken'), 1_000_000)
     assert.equal(unitMultiplier('token'), 1)
     assert.equal(unitMultiplier(''), 1)
+  })
+
+  it('分隔符归一：真实上游写法 k/tokens 必须被识别', () => {
+    // 实测资源包接口返回的是带斜杠的 k/tokens；原先只匹配 ktoken(s)，
+    // 于是它落到"未识别"分支，界面显示成 50K k/tokens（实为 50,000,000 tokens）。
+    assert.equal(unitMultiplier('k/tokens'), 1_000)
+    assert.deepEqual(parseUnit('k/tokens'), { factor: 1_000, label: 'tokens' })
+    for (const variant of ['kToken', 'ktokens', 'KTokens', 'k tokens', 'k-tokens', 'k_tokens']) {
+      assert.equal(unitMultiplier(variant), 1_000, `${variant} 应被识别为千级`)
+    }
+    assert.equal(unitMultiplier('m/tokens'), 1_000_000)
+    assert.equal(unitMultiplier('million tokens'), 1_000_000)
+  })
+
+  it('中文带量级单位「千次」也能换算', () => {
+    assert.deepEqual(parseUnit('千次'), { factor: 1_000, label: '次' })
+  })
+
+  it('不带量级的单位保持未识别（不做无依据的换算）', () => {
+    for (const unit of ['GB', '次', '个']) {
+      assert.equal(unitMultiplier(unit), undefined, `${unit} 不应被当作 token 量级`)
+      assert.equal(parseUnit(unit), undefined)
+    }
+  })
+
+  it('k/tokens 单位的用量不会被算小 1000 倍', () => {
+    const snapshot = normalizeUsage({
+      data: [{ id: 'm', name: 'M', items: [{ name: '输入 Token', unit: 'k/tokens', total: 1240 }] }],
+      auth: 'bearer',
+      query: QUERY,
+      day: '2026-01-01',
+      fallbackKeyLabel: '当前 Key',
+    })
+    assert.equal(snapshot.models[0]?.totalsByKind.input, 1_240_000, '1240 k/tokens = 1.24M tokens')
+    assert.deepEqual(snapshot.warnings, [], '识别成功就不该有未识别单位告警')
   })
 
   it('未识别的单位按 1:1 计数并产生告警', () => {

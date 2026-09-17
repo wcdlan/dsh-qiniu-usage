@@ -513,6 +513,16 @@ describe('客户端格式化', () => {
     )
   })
 
+  it('真实单位 k/tokens（带斜杠）同样换算 —— 这是线上实际返回值', () => {
+    // 用户实测：资源包单位是 k/tokens。5000W 的包 = 50,000,000 tokens = 50,000 k/tokens，
+    // 换算后显示 50M tokens，与包名里的"5000W"一致；不换算则会显示 "50K k/tokens"，
+    // 看起来像 5 万，与包名对不上。
+    assert.equal(formatAmount(75_140, 'k/tokens'), '75.14M tokens')
+    assert.equal(formatAmountPair(16_440, 50_000, 'k/tokens'), '16.44M / 50M tokens')
+    assert.equal(formatAmountPair(3_000, 3_000, 'k/tokens'), '3M / 3M tokens')
+    assert.equal(formatAmount(10_000, 'k/tokens'), '10M tokens')
+  })
+
   it('mToken 同样换算', () => {
     assert.equal(formatAmount(2, 'mToken'), '2M tokens')
     assert.equal(formatAmount(2, 'millionTokens'), '2M tokens')

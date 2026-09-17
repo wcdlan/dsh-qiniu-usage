@@ -94,31 +94,58 @@ export interface NormalizeUsageInput {
 const UNKNOWN_UNIT = 1
 
 /**
+ * 把上游的 `unit` 解析成"换算倍数 + 基础单位标签"。
+ *
+ * **必须先把分隔符归一掉**：上游真实返回的写法不止 `kToken`，实测资源包接口会给出
+ * **`k/tokens`**（带斜杠）。原先只匹配 `ktoken(s)`，于是 `k/tokens` 落到"未识别"分支，
+ * 界面显示成 `50K k/tokens` —— 实际值是 50,000 k/tokens = 50,000,000 tokens，两个量级
+ * 叠在一起，用户会以为那是 5 万。
+ *
+ * 归一规则：去掉空白与 `/ _ - . · *` 等分隔符后小写化，再匹配。
+ * 这样 `kToken` / `ktokens` / `KTokens` / `k/tokens` / `k tokens` 都归一到 `ktokens`。
+ *
+ * @param unit - 上游给出的单位原文。
+ * @returns `{ factor, label }`；`undefined` 表示单位未被识别（如 `GB`）。
+ */
+export function parseUnit(unit: string): { factor: number; label: string } | undefined {
+  const key = unit.trim().toLowerCase().replace(/[\s/_\-.·*]+/g, '')
+  switch (key) {
+    case '':
+    case 'token':
+    case 'tokens':
+      return { factor: 1, label: 'tokens' }
+    case 'k':
+    case 'ktoken':
+    case 'ktokens':
+      return { factor: 1_000, label: 'tokens' }
+    case 'm':
+    case 'mtoken':
+    case 'mtokens':
+    case 'milliontoken':
+    case 'milliontokens':
+      return { factor: 1_000_000, label: 'tokens' }
+    case 'b':
+    case 'btoken':
+    case 'btokens':
+    case 'billiontoken':
+    case 'billiontokens':
+      return { factor: 1_000_000_000, label: 'tokens' }
+    // 财务接口还会用「千次」这类自带量级的中文单位：5000 千次 = 5,000,000 次。
+    case '千次':
+      return { factor: 1_000, label: '次' }
+    default:
+      return undefined
+  }
+}
+
+/**
  * 把上游的 `unit` 换算为 token 倍数。
  *
  * @param unit - 上游给出的单位。
  * @returns 倍数；`undefined` 表示单位未被识别。
  */
 export function unitMultiplier(unit: string): number | undefined {
-  const normalized = unit.trim().toLowerCase()
-  switch (normalized) {
-    case '':
-    case 'token':
-    case 'tokens':
-      return 1
-    case 'ktoken':
-    case 'ktokens':
-    case 'k':
-      return 1_000
-    case 'mtoken':
-    case 'mtokens':
-    case 'milliontoken':
-    case 'milliontokens':
-    case 'm':
-      return 1_000_000
-    default:
-      return undefined
-  }
+  return parseUnit(unit)?.factor
 }
 
 /** 计费项归类：按名称关键字匹配。 */
