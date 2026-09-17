@@ -95,12 +95,21 @@ describe('产物 · 客户端半区 lib/client.js', () => {
     const source = await readFile(CLIENT_BUNDLE, 'utf8')
 
     const requiredSpecifiers: string[] = []
-    // react 只给最小替身：本测试关心的是"走了 require 通道"，不是渲染结果。
+    // 平台冻结模块表里可用的外部模块。只给最小替身：本测试关心的是"走了 require
+    // 通道"，不是渲染结果。
+    //
+    // 这份清单就是本插件对宿主平台的**依赖面**：加一项都要有意识（例如悬浮按钮需要
+    // react-dom/client 才能在 body 上挂 React root）。
+    const PLATFORM_MODULES: Record<string, unknown> = {
+      react: { createElement: () => null },
+      'react/jsx-runtime': { jsx: () => null, jsxs: () => null, Fragment: null },
+      'react-dom': {},
+      'react-dom/client': { createRoot: () => ({ render: () => {}, unmount: () => {} }) },
+    }
     const requireShim = (spec: string): unknown => {
       requiredSpecifiers.push(spec)
-      if (spec === 'react') return { createElement: () => null }
-      if (spec === 'react/jsx-runtime') return { jsx: () => null, jsxs: () => null, Fragment: null }
-      throw new Error(`意外的外部模块请求：${spec}`)
+      if (spec in PLATFORM_MODULES) return PLATFORM_MODULES[spec]
+      throw new Error(`意外的外部模块请求：${spec}（不在平台冻结模块表内）`)
     }
 
     let captured: { id: string; factory: (r: unknown) => unknown } | undefined
@@ -147,11 +156,19 @@ describe('产物 · 客户端半区 lib/client.js', () => {
     ])
   })
 
-  it('react 走 require 通道（未被打进 bundle）', async () => {
+  it('外部依赖只来自平台冻结模块表，且未被打进 bundle', async () => {
     const { requiredSpecifiers } = await loadClientBundle()
+    const allowed = ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client']
+    assert.ok(requiredSpecifiers.length > 0, '应至少请求一个平台模块')
+    for (const spec of requiredSpecifiers) {
+      assert.ok(
+        allowed.includes(spec),
+        `客户端 bundle 请求了平台表之外的模块：${spec}（实际：${requiredSpecifiers.join(', ')}）`,
+      )
+    }
     assert.ok(
-      requiredSpecifiers.every((s) => s === 'react' || s === 'react/jsx-runtime'),
-      `客户端 bundle 只应请求平台冻结模块，实际请求：${requiredSpecifiers.join(', ')}`,
+      requiredSpecifiers.includes('react'),
+      'react 应走 require 通道而不是被打进 bundle',
     )
   })
 
