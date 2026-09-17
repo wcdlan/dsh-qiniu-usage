@@ -863,7 +863,47 @@ Error: dsh: plugin tree failed to load: failed to apply loader entry qiniu-usage
 断言 6 条路由注册成功、禁用时不注册、卸载时 dispose。后者已用"故意加回 `export default`"
 验证过确实会红。
 
-### 15.6 构建工具链：esbuild + 手写 ModuleLoader 外壳
+### 15.6 ⚠ 一个路径只能注册一条路由（又一起真实启动失败）
+
+修掉 §15.5 之后再次启动，又崩了 —— 这次是我自己的设计错误：
+
+```
+Error: dsh: plugin tree failed to load: failed to apply loader entry qiniu-usage
+(dsh-qiniu-usage): webserver: duplicate exact route "/api/dsh-qiniu-usage/credentials"
+```
+
+**`WebRoute` 没有 method 字段**：
+
+```ts
+export interface WebRoute {
+  kind: WebRouteKind
+  path: string
+  handler: (req, res) => void | Promise<void>
+}
+```
+
+`register()` 按 `(kind, path)` 唯一，重复注册直接抛。因此 **HTTP 方法分派必须写在
+handler 内部**（每个 handler 拥有完整的响应生命周期）—— `dsh-usage` 的 refresh 路由
+就是这么做的（handler 内判 `req.method !== 'POST'` → 405）。我当初把
+`/credentials` 的 GET 与 POST 拆成了两条路由，这是错的。
+
+修法：合并为一条 `${API_PREFIX}/credentials`，handler 内按 `req.method` 分派
+（GET → describe，POST → set/unset，其余 → 405）。
+
+**为什么原测试又没拦住？** 和 §15.5 同源：测试里也把这个错误当成了预期。
+
+- `host-boot.test.ts` 的期望路径数组里，我把 `/credentials` **写了两遍**，
+  于是"6 条路由"看起来正常；
+- `contract.test.ts` 只断言 `paths.includes(expected)` 与 `paths.length >= 6`，
+  重复项完全不影响这两条断言。
+
+现在补了一条直接针对该不变量的测试：**遍历 `(kind, path)` 断言无重复**，并已用
+"故意重复注册"反证过会红（报 `[["exact /api/dsh-qiniu-usage/credentials",2]]`）。
+`host-boot.test.ts` 也加上了 `new Set(paths).size === paths.length`。
+
+**教训**：测试若只断言"存在"而不断言"唯一"，就无法覆盖会拒绝重复的注册表。
+
+### 15.7 构建工具链：esbuild + 手写 ModuleLoader 外壳
 
 `tsdown` 的 output 形态无法直接产出 `window.__ModuleLoader__.load({...})`，
 且参考包**都没发布构建配置**。M0 的解法是用 esbuild（打成 CJS）+ 一个薄包装

@@ -11,8 +11,7 @@ import { strict as assert } from 'node:assert'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { describe, it } from 'vitest'
 import {
-  makeCredentialsGetRoute,
-  makeCredentialsSetRoute,
+  makeCredentialsRoute,
   makeKeysRoute,
   makeOverviewRoute,
   makeRefreshRoute,
@@ -557,14 +556,14 @@ describe('路由 · /respack/detail', () => {
   })
 })
 
-describe('路由 · /credentials', () => {
+describe('路由 · /credentials（单条路由按方法分派）', () => {
   /** 造一个记录调用的 service 替身（凭据相关）。 */
   function makeCredentialServiceStub(overrides: {
     describe?: () => Promise<unknown>
     set?: (ref: string, value: string) => Promise<void>
     unset?: (ref: string) => Promise<void>
   } = {}): {
-    service: Parameters<typeof makeCredentialsGetRoute>[0]
+    service: Parameters<typeof makeCredentialsRoute>[0]
     sets: { ref: string; value: string }[]
     unsets: string[]
   } {
@@ -588,12 +587,12 @@ describe('路由 · /credentials', () => {
         if (overrides.unset !== undefined) await overrides.unset(ref)
       },
     }
-    return { service: stub as unknown as Parameters<typeof makeCredentialsGetRoute>[0], sets, unsets }
+    return { service: stub as unknown as Parameters<typeof makeCredentialsRoute>[0], sets, unsets }
   }
 
   it('GET 只回传 describe 形状，响应里不含任何值', async () => {
     const { service } = makeCredentialServiceStub()
-    const route = makeCredentialsGetRoute(service)
+    const route = makeCredentialsRoute(service)
     const captured: CapturedResponse = {}
     await route.handler(
       makeRequest({ url: '/api/dsh-qiniu-usage/credentials' }),
@@ -608,9 +607,46 @@ describe('路由 · /credentials', () => {
     assert.equal(captured.headers?.['cache-control'], 'no-store')
   })
 
+  it('同一条路由同时服务 GET 与 POST（WebRoute 无 method 字段）', async () => {
+    const { service } = makeCredentialServiceStub()
+    const route = makeCredentialsRoute(service)
+    assert.equal(route.path, '/api/dsh-qiniu-usage/credentials')
+
+    // GET 走 describe
+    const getCaptured: CapturedResponse = {}
+    await route.handler(
+      makeRequest({ method: 'GET', url: '/api/dsh-qiniu-usage/credentials' }),
+      makeResponse(getCaptured) as ServerResponse,
+    )
+    assert.equal(getCaptured.status, 200)
+
+    // POST 走写入
+    const postCaptured: CapturedResponse = {}
+    await route.handler(
+      makeRequest({
+        method: 'POST',
+        url: '/api/dsh-qiniu-usage/credentials',
+        body: JSON.stringify({ ref: 'QINIU_ACCESS_KEY', action: 'set', value: 'AK' }),
+      }),
+      makeResponse(postCaptured) as ServerResponse,
+    )
+    assert.equal(postCaptured.status, 200)
+  })
+
+  it('PUT 等未支持的方法返回 405', async () => {
+    const { service } = makeCredentialServiceStub()
+    const route = makeCredentialsRoute(service)
+    const captured: CapturedResponse = {}
+    await route.handler(
+      makeRequest({ method: 'PUT', url: '/api/dsh-qiniu-usage/credentials' }),
+      makeResponse(captured) as ServerResponse,
+    )
+    assert.equal(captured.status, 405)
+  })
+
   it('GET 非回环被拒绝', async () => {
     const { service } = makeCredentialServiceStub()
-    const route = makeCredentialsGetRoute(service)
+    const route = makeCredentialsRoute(service)
     const captured: CapturedResponse = {}
     await route.handler(
       makeRequest({ url: '/api/dsh-qiniu-usage/credentials', remoteAddress: '10.0.0.5' }),
@@ -621,7 +657,7 @@ describe('路由 · /credentials', () => {
 
   it('POST 拒绝非 JSON content-type（415）', async () => {
     const { service, sets } = makeCredentialServiceStub()
-    const route = makeCredentialsSetRoute(service)
+    const route = makeCredentialsRoute(service)
     const captured: CapturedResponse = {}
     await route.handler(
       makeRequest({
@@ -640,7 +676,7 @@ describe('路由 · /credentials', () => {
     const bad = ['{}', '{"ref":"X"}', '{"ref":"X","action":"delete"}', '{"action":"set","value":"v"}']
     for (const body of bad) {
       const { service, sets, unsets } = makeCredentialServiceStub()
-      const route = makeCredentialsSetRoute(service)
+      const route = makeCredentialsRoute(service)
       const captured: CapturedResponse = {}
       await route.handler(
         makeRequest({ method: 'POST', url: '/api/dsh-qiniu-usage/credentials', body }),
@@ -653,7 +689,7 @@ describe('路由 · /credentials', () => {
 
   it('POST set 透传 ref 与 value，并回传新的 describe', async () => {
     const { service, sets } = makeCredentialServiceStub()
-    const route = makeCredentialsSetRoute(service)
+    const route = makeCredentialsRoute(service)
     const captured: CapturedResponse = {}
     await route.handler(
       makeRequest({
@@ -672,7 +708,7 @@ describe('路由 · /credentials', () => {
 
   it('POST unset 走清除路径', async () => {
     const { service, unsets } = makeCredentialServiceStub()
-    const route = makeCredentialsSetRoute(service)
+    const route = makeCredentialsRoute(service)
     await route.handler(
       makeRequest({
         method: 'POST',
@@ -690,7 +726,7 @@ describe('路由 · /credentials', () => {
         throw new Error('凭据来源为只读（环境变量遮蔽），无法写入')
       },
     })
-    const route = makeCredentialsSetRoute(service)
+    const route = makeCredentialsRoute(service)
     const captured: CapturedResponse = {}
     await route.handler(
       makeRequest({
@@ -712,7 +748,7 @@ describe('路由 · /credentials', () => {
         throw new Error(`不允许写入未声明的凭据引用：${ref}`)
       },
     })
-    const route = makeCredentialsSetRoute(service)
+    const route = makeCredentialsRoute(service)
     const captured: CapturedResponse = {}
     await route.handler(
       makeRequest({
@@ -729,7 +765,7 @@ describe('路由 · /credentials', () => {
 
   it('POST 的非回环请求被拒绝', async () => {
     const { service, sets } = makeCredentialServiceStub()
-    const route = makeCredentialsSetRoute(service)
+    const route = makeCredentialsRoute(service)
     const captured: CapturedResponse = {}
     await route.handler(
       makeRequest({
@@ -750,7 +786,7 @@ describe('路由 · /credentials', () => {
         throw new Error('describe 炸了')
       },
     })
-    const route = makeCredentialsGetRoute(service)
+    const route = makeCredentialsRoute(service)
     const captured: CapturedResponse = {}
     await route.handler(
       makeRequest({ url: '/api/dsh-qiniu-usage/credentials' }),

@@ -116,14 +116,13 @@ async function bootPlugin(config: Record<string, unknown> = {}): Promise<{
 }
 
 describe('宿主装载 · 走 cordis 的 inject 解析与应用', () => {
-  it('提供 webServer 后插件能成功应用，并注册全部 6 条路由', async () => {
+  it('提供 webServer 后插件能成功应用，并注册全部 5 条路由（路径唯一）', async () => {
     const { routes } = await bootPlugin()
 
     const paths = routes.map((route) => route.path).sort()
     assert.deepEqual(
       paths,
       [
-        '/api/dsh-qiniu-usage/credentials',
         '/api/dsh-qiniu-usage/credentials',
         '/api/dsh-qiniu-usage/keys',
         '/api/dsh-qiniu-usage/overview',
@@ -132,6 +131,8 @@ describe('宿主装载 · 走 cordis 的 inject 解析与应用', () => {
       ].sort(),
       `注册到的路由与预期不符：${JSON.stringify(paths)}`,
     )
+    // 桩服务不校验重名，但真实 webServer 会 —— 所以这里显式断言唯一性。
+    assert.equal(new Set(paths).size, paths.length, '路径不得重复注册')
     for (const route of routes) {
       assert.equal(route.kind, 'exact')
       assert.equal(typeof route.handler, 'function')
@@ -167,7 +168,7 @@ describe('宿主装载 · 走 cordis 的 inject 解析与应用', () => {
 
   it('卸载时 dispose 掉全部路由', async () => {
     const { ctx, routes } = await bootPlugin()
-    assert.equal(routes.length, 6)
+    assert.equal(routes.length, 5)
 
     // dispose 这次挂载的 fiber（afterEach 也会兜底）。
     const fiber = mounted.pop()
@@ -179,6 +180,6 @@ describe('宿主装载 · 走 cordis 的 inject 解析与应用', () => {
   it('缺 settings 服务时走降级路径而不是崩溃', async () => {
     // bootPlugin 没有提供 settings，能成功 apply 本身就说明降级路径可用。
     const { routes } = await bootPlugin()
-    assert.equal(routes.length, 6)
+    assert.equal(routes.length, 5)
   })
 })

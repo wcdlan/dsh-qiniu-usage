@@ -211,48 +211,37 @@ export function makeRespackDetailRoute(service: QiniuUsageService): WebRoute {
 }
 
 /**
- * `GET /credentials` —— 凭据状态。
+ * `/credentials` —— 凭据状态读取与写入。
  *
- * **只回传 describe 形状**（`configured` / `source` / `writable`），永远不含值。
- * 这是设计文档 §11.1 的硬约束：浏览器永不接触 AK/SK。
+ * ⚠ **一个路径只能注册一条路由。** `WebRoute` 没有 method 字段，
+ * `webServer.register()` 按 `(kind, path)` 唯一，重复注册会在启动期抛
+ * `duplicate exact route`。方法分派必须写在 handler 内部 —— 与 `dsh-usage`
+ * 的 refresh 路由同款做法。
+ *
+ * - `GET`  → 只回 `describe` 形状（`configured` / `source` / `writable`），永不返回值。
+ * - `POST` → body `{ ref, action: 'set', value }` 或 `{ ref, action: 'unset' }`。
+ *   `ref` 由 service 做白名单校验，因此这个接口**不能写任意路径**。
  *
  * @param service - 用量服务。
  * @returns 路由定义。
  */
-export function makeCredentialsGetRoute(service: QiniuUsageService): WebRoute {
+export function makeCredentialsRoute(service: QiniuUsageService): WebRoute {
   return {
     kind: 'exact',
     path: `${API_PREFIX}/credentials`,
     handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-      if (!guard(req, res, ['GET'])) return
-      try {
-        ok(res, { ok: true, credentials: await service.describeCredentials() })
-      } catch (error) {
-        ok(res, { ok: false, error: toSourceError(error, 'usage') })
+      if (!guard(req, res, ['GET', 'POST'])) return
+
+      if (req.method === 'GET') {
+        try {
+          ok(res, { ok: true, credentials: await service.describeCredentials() })
+        } catch (error) {
+          ok(res, { ok: false, error: toSourceError(error, 'usage') })
+        }
+        return
       }
-    },
-  }
-}
 
-/**
- * `POST /credentials` —— 写入或清除一个凭据引用。
- *
- * body：`{ ref, action: 'set', value }` 或 `{ ref, action: 'unset' }`。
- *
- * - `ref` 必须在本插件声明的白名单内（由 service 校验），因此这个接口
- *   **不能写任意路径**。
- * - 只读来源（环境变量）遮蔽时会由凭据服务拒绝，错误原样回传以便 UI 说明。
- *
- * @param service - 用量服务。
- * @returns 路由定义。
- */
-export function makeCredentialsSetRoute(service: QiniuUsageService): WebRoute {
-  return {
-    kind: 'exact',
-    path: `${API_PREFIX}/credentials`,
-    handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-      if (!guard(req, res, ['POST'])) return
-
+      // POST：写入或清除。
       const contentType = req.headers['content-type'] ?? ''
       if (!contentType.includes('application/json')) {
         writeJson(
@@ -316,7 +305,6 @@ export function makeRoutes(service: QiniuUsageService): WebRoute[] {
     makeRefreshRoute(service),
     makeKeysRoute(service),
     makeRespackDetailRoute(service),
-    makeCredentialsGetRoute(service),
-    makeCredentialsSetRoute(service),
+    makeCredentialsRoute(service),
   ]
 }

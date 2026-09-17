@@ -39,11 +39,10 @@ describe('跨半区契约 · 路由前缀', () => {
     assert.equal(HOST_API_PREFIX, '/api/dsh-qiniu-usage')
   })
 
-  it('宿主注册的每条路由都以该前缀开头', () => {
+  it('宿主注册的每条路由都以该前缀开头，且客户端需要的端点全在', () => {
     // 用一个最小替身取出路径即可，不需要真的调服务。
     const stub = {} as unknown as Parameters<typeof makeRoutes>[0]
     const paths = makeRoutes(stub).map((route) => route.path)
-    assert.ok(paths.length >= 6, `路由数量异常：${paths.length}`)
     for (const path of paths) {
       assert.ok(path.startsWith(HOST_API_PREFIX), `${path} 未以 ${HOST_API_PREFIX} 开头`)
     }
@@ -57,6 +56,25 @@ describe('跨半区契约 · 路由前缀', () => {
     ]) {
       assert.ok(paths.includes(expected), `宿主缺少路由 ${expected}`)
     }
+  })
+
+  it('⚠ 不得有重复的 (kind, path) —— webServer 会拒绝，启动期直接崩', () => {
+    // 真实事故：/credentials 曾同时注册 GET 与 POST 两条路由，
+    // dsh web 启动即报 `webserver: duplicate exact route "/api/dsh-qiniu-usage/credentials"`。
+    // WebRoute 没有 method 字段，方法分派必须写在 handler 内。
+    const stub = {} as unknown as Parameters<typeof makeRoutes>[0]
+    const routes = makeRoutes(stub)
+    const seen = new Map<string, number>()
+    for (const route of routes) {
+      const key = `${route.kind} ${route.path}`
+      seen.set(key, (seen.get(key) ?? 0) + 1)
+    }
+    const duplicates = [...seen.entries()].filter(([, count]) => count > 1)
+    assert.deepEqual(
+      duplicates,
+      [],
+      `存在重复路由，dsh web 启动会失败：${JSON.stringify(duplicates)}`,
+    )
   })
 
   it('所有路由都是 exact 且 handler 是函数', () => {
