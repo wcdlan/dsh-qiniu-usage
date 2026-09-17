@@ -567,6 +567,57 @@ ctx.slots.register({
 - **i18n**：`locale.register(NS, { zh, en })`，默认跟随界面语言。
 - **样式**：只用宿主主题 token（`--dsw-alias-*`），不引入 UI 库、不引 Tailwind，保持与现有设置页一致。
 
+### 9.4 布局与间距（改版记录）
+
+第一版能出数据，但"太挤"：到处 2~4px 间距，靠 `flex: 1 1 auto` 撑开，数字被推到很远；
+资源包的条形图满宽且包间无分隔，看起来像属于下一个包。改版要点：
+
+**间距节奏**：统一走 4px 基准（2/4/6/8/10/12/14/16）。卡片之间 16px、卡内 12px、
+包内 7px、包间 12px + 分隔线；文字行高 1.55。
+
+**用 CSS Grid 取代 flex 撑开**：用量表从"table + 34% 宽的条形图列"改为
+`minmax(0,1fr) 72px 72px 82px` 四列 —— 名字列吸收剩余宽度，数字列定宽右对齐并启用
+`tabular-nums`，跨行数位对齐。原先条形图占 34%，会在名字与数字之间留一大片死空间。
+
+**条形图移到名字下方**（而不是单独一列）：面板内容宽约 548px，独立一列会把模型名挤到
+必须省略 —— 名字是主标识，优先保它；条贴在名字下也让归属关系一目了然。极小占比
+（如 1%）用 `max(<pct>%, 3px)` 保底可见宽度，否则看起来像"没有数据"。
+
+**逐包行加分隔线 + 上下留白**：避免满宽条形图"串"到下一个包。已用完/已过期的包整体降
+透明度并用填充式徽标，与"使用中"的描边式区分；利用率 ≥75% 转警告色、≥90% 转危险色。
+百分比定宽右对齐，跨行形成一列便于比较。
+
+**单位换算（可读性修正）**：上游资源包单位可能是 `kTokens` 这类**自带量级**的单位。
+若再叠加 SI 紧凑表示会得到 `75.14K kTokens` —— 实际值是 75,140 kTokens = 75.14M tokens，
+**两套量级叠在一起，用户会读错 1000 倍**。现在单位自带量级时先换算成 tokens 并只保留
+一个单位标签：`75.14M tokens`、`15.86M / 50M tokens`；`GB` 这类无量级单位保持原样。
+
+**交互状态**：按钮/下拉/输入框补上 hover、active（`translateY(.5px)`）与 `focus-visible`
+焦点环（无障碍要求，不能省），过渡 160ms。这些无法用内联样式表达，因此样式从内联对象
+改为**注入一个 `<style>` + 类名**，类名统一 `dsh-qiniu-` 前缀隔离，避免与宿主碰撞。
+
+**窄宽度退化**：实测 400 / 548 / 820px 三档，均满足 `docScrollWidth === viewport`
+且溢出元素数为 0；工具条自动换行，模型名以省略号截断。
+
+#### 视觉自检工具
+
+`scripts/preview.mjs` 把面板渲染成 HTML（含样式），再用 headless Chrome 截图，这样改
+样式时能**真的看到**效果而不是盲改：
+
+```bash
+node scripts/preview.mjs
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --headless=new --disable-gpu --no-sandbox --hide-scrollbars \
+  --user-data-dir="$PWD/.tmp/chrome-profile" --virtual-time-budget=2500 \
+  --force-device-scale-factor=2 --window-size=820,1500 \
+  --screenshot="$PWD/.tmp/shot.png" "file://$PWD/.tmp/preview.html?w=820&diag=1"
+```
+
+- `?w=<px>` 用**容器宽度**模拟窄面板。**不要**用 `--window-size` 测窄宽度：Chrome 会把
+  窗口夹到最小值（约 500px），按更小的值出图只会把右侧**裁掉**，看起来像布局溢出，实为
+  假象 —— 这个假象一度让我误判存在横向溢出。
+- `?diag=1` 在页面顶部列出超出面板宽度的元素，用于定位是谁撑破了布局。
+
 ---
 
 ## 10. 配置与凭据

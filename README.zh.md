@@ -58,8 +58,23 @@ dsh plugin --profile web add link:/path/to/dsh-qiniu-usage
 npm install
 npm run build      # lib/index.js、lib/client.js、lib/types/**
 npm run check      # tsc --noEmit
-npm test           # vitest（238 项）
+npm test           # vitest（275 项）
 ```
+
+改面板布局时，把它渲染成 HTML 再截图，而不是盲改 CSS：
+
+```bash
+node scripts/preview.mjs
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --headless=new --disable-gpu --no-sandbox --hide-scrollbars \
+  --user-data-dir="$PWD/.tmp/chrome-profile" --virtual-time-budget=2500 \
+  --force-device-scale-factor=2 --window-size=820,1500 \
+  --screenshot="$PWD/.tmp/shot.png" "file://$PWD/.tmp/preview.html?w=820&diag=1"
+```
+
+`?w=<px>` 设定模拟的面板宽度（测窄宽度要用它而不是 `--window-size`：Chrome 会把窗口
+夹到约 500px，只会把截图右侧裁掉，看着像布局溢出，其实不是）。`?diag=1` 列出超出面板
+宽度的元素，用来定位是谁撑破了布局。
 
 构建产出两个契约不同的产物：
 

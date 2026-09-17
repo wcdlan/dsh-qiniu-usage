@@ -17,7 +17,9 @@ import {
   keyOptions,
 } from '../src/client/usage-store.ts'
 import {
+  convertAmount,
   formatAmount,
+  formatAmountPair,
   formatClock,
   formatMonthDay,
   formatPercent,
@@ -498,6 +500,34 @@ describe('客户端格式化', () => {
   it('formatAmount 拼单位', () => {
     assert.equal(formatAmount(1280, 'GB'), '1.28K GB')
     assert.equal(formatAmount(10, ''), '10')
+  })
+
+  it('单位自带量级时先换算再显示（避免 "75.14K kTokens" 两套量级叠加）', () => {
+    // 真实数据：75140 kTokens 就是 75.14M tokens。若直接紧凑化再拼单位，
+    // 会得到 "75.14K kTokens" —— 实际值差 1000 倍，极易读错数量级。
+    assert.deepEqual(convertAmount(75_140, 'kTokens'), { text: '75.14M', unitLabel: 'tokens' })
+    assert.equal(formatAmount(75_140, 'kTokens'), '75.14M tokens')
+    assert.ok(
+      !formatAmount(75_140, 'kTokens').includes('kTokens'),
+      '换算后不应再出现原单位，否则两套量级又叠在一起',
+    )
+  })
+
+  it('mToken 同样换算', () => {
+    assert.equal(formatAmount(2, 'mToken'), '2M tokens')
+    assert.equal(formatAmount(2, 'millionTokens'), '2M tokens')
+  })
+
+  it('非量级单位保持原样（GB 等不做换算）', () => {
+    assert.deepEqual(convertAmount(5120, 'GB'), { text: '5.12K', unitLabel: 'GB' })
+    assert.equal(formatAmount(5120, 'GB'), '5.12K GB')
+  })
+
+  it('formatAmountPair 只让单位出现一次', () => {
+    assert.equal(formatAmountPair(15_860, 50_000, 'kTokens'), '15.86M / 50M tokens')
+    assert.equal(formatAmountPair(0, 3_000, 'kTokens'), '0 / 3M tokens')
+    assert.equal(formatAmountPair(1000, 2000, 'GB'), '1K / 2K GB')
+    assert.equal(formatAmountPair(5, 10, ''), '5 / 10')
   })
 
   it('truncate 保留长度上限', () => {

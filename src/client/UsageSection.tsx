@@ -7,36 +7,22 @@
  * - 已有数据时刷新保留旧数据 + 顶部细进度条，避免闪空。
  * - 用量与资源包**分源展示错误**，互不遮蔽。
  *
+ * 布局：面板头 → 工具条 → 告警 → 骨架/卡片 → 分源错误。卡片之间统一 16px，
+ * 卡内 12px，形成稳定的纵向节奏（原先到处 2~4px，挤成一团）。
+ *
  * @module dsh-qiniu-usage/client/UsageSection
  */
 
-import { createElement, useEffect, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { createElement, useEffect, useSyncExternalStore, type ReactNode } from 'react'
 import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { UsageSnapshot } from '../qiniu/usage.ts'
 import type { Config } from '../config.ts'
 import { CredentialsForm } from './CredentialsForm.tsx'
 import { ModelUsageTable } from './ModelUsageTable.tsx'
 import { RespackBars } from './RespackBars.tsx'
-import { keyOptions, type UsageStoreView } from './usage-store.ts'
 import { formatClock, formatTokens, formatWatermark } from './format.ts'
-import {
-  buttonDisabledStyle,
-  buttonStyle,
-  captionStyle,
-  cardStyle,
-  emptyStyle,
-  errorStyle,
-  KEYFRAMES,
-  mutedStyle,
-  progressBarStyle,
-  rootStyle,
-  sectionTitleStyle,
-  selectStyle,
-  skeletonStyle,
-  toolbarSpacerStyle,
-  toolbarStyle,
-  warnStyle,
-} from './styles.ts'
+import { cls, PANEL_CSS } from './styles.ts'
+import { keyOptions, type UsageStoreView } from './usage-store.ts'
 
 /** 翻译函数签名（与 locale 提供的形态兼容）。 */
 export type Translate = (key: string, params?: Record<string, unknown>) => string
@@ -44,7 +30,7 @@ export type Translate = (key: string, params?: Record<string, unknown>) => strin
 /**
  * 注册时由 `inject: face` 提供的注入面。
  *
- * ⚠ **注册返回的对象的成员会被摊平成组件 props**，不是一个 `face` 属性。
+ * ⚠ **注册返回对象的成员会被摊平成组件 props**，不是一个 `face` 属性。
  * 参考实现同款：`interface UsageSectionProps extends UsageSectionFace { close }`，
  * 组件里直接 `const { store, settings } = props`。
  *
@@ -85,7 +71,11 @@ export function UsageSection(props: UsageSectionProps): ReactNode {
   const t: Translate = props.t ?? ((key) => key)
 
   if (store === undefined) {
-    return createElement('div', { style: rootStyle }, createElement('div', { style: mutedStyle }, '…'))
+    return createElement(
+      'div',
+      { className: cls.panel },
+      createElement('style', null, PANEL_CSS),
+    )
   }
   return createElement(UsageSectionInner, { store, settings, t })
 }
@@ -121,64 +111,79 @@ function UsageSectionInner({ store, settings, t }: {
 
   return createElement(
     'div',
-    { style: rootStyle },
-    createElement('style', null, KEYFRAMES),
+    { className: cls.panel },
+    createElement('style', null, PANEL_CSS),
 
     // 顶部细进度条：刷新时保留旧数据
-    state.refreshing && data !== null ? createElement('div', { style: progressBarStyle }) : null,
+    state.refreshing && data !== null ? createElement('div', { className: cls.progress }) : null,
 
+    // 面板头
     createElement(
       'div',
-      { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
-      createElement('h3', { style: { ...sectionTitleStyle, fontSize: '14px' } }, t('qiniu.title')),
-      createElement('div', { style: mutedStyle }, t('qiniu.subtitle')),
+      { className: cls.head },
+      createElement('h3', { className: cls.title }, t('qiniu.title')),
+      createElement('div', { className: cls.subtitle }, t('qiniu.subtitle')),
     ),
 
-    // 工具条
+    // 工具条：筛选项靠左，动作靠右
     createElement(
       'div',
-      { style: toolbarStyle },
-      createElement('span', { style: mutedStyle }, t('qiniu.key')),
+      { className: cls.toolbar },
       createElement(
-        'select',
-        {
-          style: selectStyle,
-          value: state.key,
-          'aria-label': t('qiniu.key'),
-          onChange: (event: { target: { value: string } }) => store.actions.setKey(event.target.value),
-        },
-        ...keys.map((option) =>
-          createElement(
-            'option',
-            { key: option.value, value: option.value },
-            option.hasUsage ? option.label : `${option.label}（${t('qiniu.empty.noUsage')}）`,
+        'div',
+        { className: cls.field },
+        createElement('span', { className: cls.label }, t('qiniu.key')),
+        createElement(
+          'select',
+          {
+            className: cls.select,
+            value: state.key,
+            'aria-label': t('qiniu.key'),
+            onChange: (event: { target: { value: string } }) => store.actions.setKey(event.target.value),
+          },
+          ...keys.map((option) =>
+            createElement(
+              'option',
+              { key: option.value, value: option.value },
+              option.hasUsage ? option.label : `${option.label}（${t('qiniu.empty.noUsage')}）`,
+            ),
           ),
         ),
       ),
-      createElement('span', { style: mutedStyle }, t('qiniu.day')),
       createElement(
-        'select',
-        {
-          style: selectStyle,
-          value: state.day,
-          'aria-label': t('qiniu.day'),
-          onChange: (event: { target: { value: string } }) => store.actions.setDay(event.target.value),
-        },
-        ...DAY_OPTIONS.map((value) => createElement('option', { key: value, value }, t(`qiniu.day.${value}`))),
-        // 落在一个非今天/昨天的具体日期上时，补一个选项以免 select 显示错乱。
-        DAY_OPTIONS.includes(state.day as (typeof DAY_OPTIONS)[number])
-          ? null
-          : createElement('option', { key: state.day, value: state.day }, state.day),
+        'div',
+        { className: cls.field },
+        createElement('span', { className: cls.label }, t('qiniu.day')),
+        createElement(
+          'select',
+          {
+            className: cls.select,
+            value: state.day,
+            'aria-label': t('qiniu.day'),
+            onChange: (event: { target: { value: string } }) => store.actions.setDay(event.target.value),
+          },
+          ...DAY_OPTIONS.map((value) =>
+            createElement('option', { key: value, value }, t(`qiniu.day.${value}`)),
+          ),
+          // 落在非今天/昨天的具体日期上时补一个选项，避免 select 显示错乱。
+          DAY_OPTIONS.includes(state.day as (typeof DAY_OPTIONS)[number])
+            ? null
+            : createElement('option', { key: state.day, value: state.day }, state.day),
+        ),
       ),
-      createElement('span', { style: toolbarSpacerStyle }),
+      createElement('div', { style: { flex: '1 1 auto' } }),
       state.updatedAt === null
         ? null
-        : createElement('span', { style: captionStyle }, t('qiniu.updated', { time: formatClock(state.updatedAt) })),
+        : createElement(
+            'span',
+            { className: cls.label },
+            t('qiniu.updated', { time: formatClock(state.updatedAt) }),
+          ),
       createElement(
         'button',
         {
           type: 'button',
-          style: state.refreshing ? buttonDisabledStyle : buttonStyle,
+          className: cls.btn,
           disabled: state.refreshing,
           onClick: () => store.actions.refresh(),
         },
@@ -190,15 +195,15 @@ function UsageSectionInner({ store, settings, t }: {
     state.day === 'today' && usage !== null
       ? createElement(
           'div',
-          { style: warnStyle },
-          createElement(
-            'span',
-            null,
-            `⚠ ${t('qiniu.warn.dataDelay')}`
-            + (usage.watermark === undefined || usage.watermark === ''
-              ? ''
-              : `（上游水位 ${formatWatermark(usage.watermark)}）`),
-          ),
+          { className: `${cls.callout} ${cls.calloutWarn}` },
+          createElement('strong', null, t('qiniu.warn.dataDelay')),
+          usage.watermark === undefined || usage.watermark === ''
+            ? null
+            : createElement(
+                'span',
+                { className: cls.muted, style: { fontSize: '11.5px' } },
+                `上游水位 ${formatWatermark(usage.watermark)}`,
+              ),
         )
       : null,
 
@@ -206,46 +211,92 @@ function UsageSectionInner({ store, settings, t }: {
     showOnlyError
       ? createElement(
           'div',
-          { style: errorStyle },
-          createElement('span', { style: { fontWeight: 600 } }, t('qiniu.error.usage')),
+          { className: `${cls.callout} ${cls.calloutError}` },
+          createElement('strong', null, t('qiniu.error.usage')),
           createElement('span', null, state.error ?? ''),
           createElement(
             'button',
-            { type: 'button', style: { ...buttonStyle, alignSelf: 'flex-start' }, onClick: () => store.actions.refresh() },
+            {
+              type: 'button',
+              className: cls.btn,
+              style: { alignSelf: 'flex-start', marginTop: '4px' },
+              onClick: () => store.actions.refresh(),
+            },
             t('qiniu.error.retry'),
           ),
         )
       : null,
 
-    // 首屏骨架
+    // 首屏骨架：形状贴近真实卡片（标题 + 若干行）
     isInitialLoading
       ? createElement(
           'div',
-          { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
-          createElement('div', { style: { ...skeletonStyle, width: '60%' } }),
-          createElement('div', { style: { ...skeletonStyle, width: '85%' } }),
-          createElement('div', { style: { ...skeletonStyle, width: '45%' } }),
-          createElement('div', { style: mutedStyle }, t('qiniu.loading')),
+          { className: cls.card },
+          createElement(
+            'div',
+            { className: cls.skeleton },
+            createElement('div', { className: cls.skelLine, style: { width: '32%' } }),
+            createElement('div', { className: cls.skelLine, style: { width: '92%' } }),
+            createElement('div', { className: cls.skelLine, style: { width: '78%' } }),
+            createElement('div', { className: cls.skelLine, style: { width: '60%' } }),
+          ),
+          createElement(
+            'div',
+            { className: cls.muted, style: { fontSize: '11.5px' } },
+            t('qiniu.loading'),
+          ),
         )
       : null,
 
+    // 用量卡片
     !isInitialLoading && !showOnlyError
       ? createElement(
-          'div',
-          { style: cardStyle },
+          'section',
+          { className: cls.card },
+          createElement(
+            'div',
+            { className: cls.cardHead },
+            createElement('h4', { className: cls.cardTitle }, t('qiniu.usage.heading')),
+            usage === null || usage.models.length === 0
+              ? null
+              : createElement(
+                  'span',
+                  { className: cls.cardNote },
+                  t('qiniu.usage.summary', {
+                    total: formatTokens(usage.totals.total),
+                    models: usage.models.length,
+                  }),
+                ),
+          ),
           renderUsageBlock(usage, state.key, t),
         )
       : null,
 
-    !isInitialLoading && !showOnlyError
-      ? createElement('div', { style: cardStyle }, renderRespackBlock(store, respack, warnings, t))
-      : null,
-
-    // 凭据：键名只读 + 值输入框（两层语义，见 §10.2）
+    // 资源包卡片
     !isInitialLoading && !showOnlyError
       ? createElement(
-          'div',
-          { style: cardStyle },
+          'section',
+          { className: cls.card },
+          createElement(
+            'div',
+            { className: cls.cardHead },
+            createElement('h4', { className: cls.cardTitle }, t('qiniu.respack.heading')),
+            createElement('span', { className: cls.badge }, t('qiniu.respack.monthScope')),
+          ),
+          renderRespackBlock(store, respack, warnings, t),
+        )
+      : null,
+
+    // 凭据卡片：键名只读 + 值输入框（两层语义，见 §10.2）
+    !isInitialLoading && !showOnlyError
+      ? createElement(
+          'section',
+          { className: cls.card },
+          createElement(
+            'div',
+            { className: cls.cardHead },
+            createElement('h4', { className: cls.cardTitle }, t('qiniu.credentials.heading')),
+          ),
           createElement(CredentialsForm, {
             credentials: state.credentials,
             t,
@@ -255,7 +306,7 @@ function UsageSectionInner({ store, settings, t }: {
         )
       : null,
 
-    // 分源错误
+    // 分源错误：用量与资源包失败互不遮蔽
     ...(!showOnlyError && data !== null
       ? data.errors.map((error) => {
           const label = error.source === 'usage' ? t('qiniu.error.usage') : t('qiniu.error.respack')
@@ -266,10 +317,16 @@ function UsageSectionInner({ store, settings, t }: {
               : null
           return createElement(
             'div',
-            { key: `${error.source}-${error.code ?? 'na'}`, style: errorStyle },
-            createElement('span', { style: { fontWeight: 600 } }, label + (error.code === undefined ? '' : `（code=${error.code}）`)),
+            { key: `${error.source}-${error.code ?? 'na'}`, className: `${cls.callout} ${cls.calloutError}` },
+            createElement(
+              'strong',
+              null,
+              label + (error.code === undefined ? '' : `（code=${error.code}）`),
+            ),
             createElement('span', null, error.message),
-            hint === null ? null : createElement('span', { style: mutedStyle }, hint),
+            hint === null
+              ? null
+              : createElement('span', { className: cls.muted, style: { fontSize: '11.5px' } }, hint),
           )
         })
       : []),
@@ -279,40 +336,18 @@ function UsageSectionInner({ store, settings, t }: {
 /** 用量块：空状态 / 模型表。 */
 function renderUsageBlock(usage: UsageSnapshot | null, selectedKey: string, t: Translate): ReactNode {
   if (usage === null) {
-    return createElement(
-      'div',
-      { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-      createElement('h4', { style: sectionTitleStyle }, t('qiniu.usage.heading')),
-      createElement('div', { style: emptyStyle }, t('qiniu.error.usage')),
-    )
+    return createElement('div', { className: cls.empty }, t('qiniu.error.usage'))
   }
 
   if (usage.models.length === 0) {
     return createElement(
       'div',
-      { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-      createElement('h4', { style: sectionTitleStyle }, t('qiniu.usage.heading')),
-      createElement(
-        'div',
-        { style: emptyStyle },
-        selectedKey === '' ? t('qiniu.empty.noUsage') : t('qiniu.empty.noUsageKey'),
-      ),
+      { className: cls.empty },
+      selectedKey === '' ? t('qiniu.empty.noUsage') : t('qiniu.empty.noUsageKey'),
     )
   }
 
-  return createElement(
-    'div',
-    { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-    createElement(ModelUsageTable, { models: usage.models, grandTotal: usage.totals.total, t }),
-    createElement(
-      'div',
-      { style: mutedStyle },
-      t('qiniu.usage.summary', {
-        total: formatTokens(usage.totals.total),
-        models: usage.models.length,
-      }),
-    ),
-  )
+  return createElement(ModelUsageTable, { models: usage.models, grandTotal: usage.totals.total, t })
 }
 
 /** 资源包块：空状态 / 利用率与逐包。 */
@@ -323,16 +358,12 @@ function renderRespackBlock(
   t: Translate,
 ): ReactNode {
   if (respack === null) {
-    return createElement(
-      'div',
-      { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-      createElement('h4', { style: sectionTitleStyle }, t('qiniu.respack.heading')),
-      createElement('div', { style: emptyStyle }, t('qiniu.error.respack')),
-    )
+    return createElement('div', { className: cls.empty }, t('qiniu.error.respack'))
   }
+
   return createElement(
     'div',
-    { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
+    { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
     createElement(RespackBars, {
       snapshot: respack,
       details: store.getSnapshot().details,
@@ -343,10 +374,22 @@ function renderRespackBlock(
       ? null
       : createElement(
           'div',
-          { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
-          createElement('span', { style: captionStyle }, t('qiniu.warnings.heading')),
-          ...warnings.map((warning, index) =>
-            createElement('span', { key: `${index}-${warning}`, style: captionStyle }, `· ${warning}`),
+          { style: { display: 'flex', flexDirection: 'column', gap: '5px' } },
+          createElement(
+            'span',
+            { className: cls.subheadTitle },
+            t('qiniu.warnings.heading'),
+          ),
+          createElement(
+            'div',
+            { className: cls.warnList },
+            ...warnings.map((warning, index) =>
+              createElement(
+                'span',
+                { key: `${index}-${warning}`, className: cls.muted, style: { fontSize: '11px' } },
+                `· ${warning}`,
+              ),
+            ),
           ),
         ),
   )

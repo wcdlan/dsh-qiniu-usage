@@ -61,7 +61,12 @@ function makeUpstreamFetch(options: { emptyUsage?: boolean } = {}): typeof fetch
   }) as typeof fetch
 }
 
-/** 用真实 service 产出一份宿主 `/overview` 载荷。 */
+/**
+ * 用真实 service 产出一份宿主 `/overview` 载荷。
+ *
+ * 刻意把资源包单位改成上游真实存在的 `kTokens`：默认 fixture 用的是 `GB`，
+ * 那样就永远测不到"单位自带量级"的换算路径（会变成空断言）。
+ */
 async function makePayload(options: { emptyUsage?: boolean } = {}): Promise<OverviewPayload> {
   const service = new QiniuUsageService({
     config: resolveConfig(),
@@ -78,7 +83,16 @@ async function makePayload(options: { emptyUsage?: boolean } = {}): Promise<Over
     sleep: async () => {},
     minRequestIntervalMs: 0,
   })
-  return service.overview('today', '')
+  const payload = await service.overview('today', '')
+  if (payload.respack !== null) {
+    // 换成 kTokens：验证换算后界面里不再出现 "K kTokens" 这种两套量级叠加的写法。
+    payload.respack = {
+      ...payload.respack,
+      items: payload.respack.items.map((item) => ({ ...item, unit: 'kTokens' })),
+      packages: payload.respack.packages.map((pack) => ({ ...pack, unit: 'kTokens' })),
+    }
+  }
+  return payload
 }
 
 /**
@@ -175,6 +189,11 @@ describe('面板渲染 · 注入面摊平成 props', () => {
     assert.ok(html.includes('AI大模型融合资源包'), '应渲染计费项名')
     assert.ok(html.includes('68%'), '应渲染利用率')
     assert.ok(html.includes('中国大陆全时段加速流量5TB'), '应渲染资源包名')
+
+    // 单位可读性：上游单位 kTokens 一律换算成 tokens，界面里不应再出现 "K kTokens"。
+    // （载荷已被改成 kTokens 单位，所以这两条断言是真的在跑换算路径。）
+    assert.ok(!html.includes('kTokens'), `界面里不应出现未换算的 kTokens：${html.slice(0, 300)}`)
+    assert.ok(html.includes('M tokens'), `应显示换算后的 tokens 单位：${html.slice(0, 300)}`)
 
     // 凭据卡片（状态未加载时也不应崩）
     assert.ok(html.includes('凭据'), '应渲染凭据分区标题')

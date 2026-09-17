@@ -6,6 +6,8 @@
  * @module dsh-qiniu-usage/client/format
  */
 
+import { unitMultiplier } from '../qiniu/usage.ts'
+
 /** SI 千分进位。 */
 const SI_UNITS = [
   { limit: 1e9, suffix: 'B', divisor: 1e9 },
@@ -80,15 +82,57 @@ export function formatMonthDay(iso: string | undefined): string {
 }
 
 /**
+ * 把数值与其单位换算为"数值文本 + 单位标签"。
+ *
+ * **关键修正**：上游的资源包单位本身可能自带量级（例如 `kTokens`）。此时若再叠加
+ * SI 紧凑表示，会得到 `75.14K kTokens` 这种**两套量级叠在一起**的写法 —— 实际值是
+ * 75,140 kTokens = 75.14M tokens，用户极易读错数量级。所以单位自带量级时先换算成
+ * 基础单位（tokens），标签也只留一次。
+ *
+ * @param value - 数值（以 `unit` 为单位）。
+ * @param unit - 上游给出的单位原文。
+ * @returns `{ text, unitLabel }`，例如 `{ text: '75.14M', unitLabel: 'tokens' }`。
+ */
+export function convertAmount(
+  value: number | undefined,
+  unit: string,
+): { text: string; unitLabel: string } {
+  const multiplier = unitMultiplier(unit)
+  if (multiplier !== undefined && multiplier > 1) {
+    return { text: formatTokens((value ?? 0) * multiplier), unitLabel: 'tokens' }
+  }
+  return { text: formatTokens(value), unitLabel: unit }
+}
+
+/**
  * 把数值格式化为带单位的分段用量，用于资源包行。
  *
  * @param value - 数值。
- * @param unit - 单位（如 `GB`）。
- * @returns 形如 `1.28K GB` 的字符串。
+ * @param unit - 单位（如 `GB`、`kTokens`）。
+ * @returns 形如 `75.14M tokens` / `1.28K GB` 的字符串。
  */
 export function formatAmount(value: number | undefined, unit: string): string {
-  const text = formatTokens(value)
-  return unit === '' ? text : `${text} ${unit}`
+  const { text, unitLabel } = convertAmount(value, unit)
+  return unitLabel === '' ? text : `${text} ${unitLabel}`
+}
+
+/**
+ * 把"已用 / 总量"格式化为一段文本，单位只出现一次。
+ *
+ * @param used - 已用量。
+ * @param total - 总量。
+ * @param unit - 单位。
+ * @returns 形如 `15.86M / 50M tokens` 的字符串。
+ */
+export function formatAmountPair(
+  used: number | undefined,
+  total: number | undefined,
+  unit: string,
+): string {
+  const left = convertAmount(used, unit)
+  const right = convertAmount(total, unit)
+  const label = right.unitLabel === '' ? '' : ` ${right.unitLabel}`
+  return `${left.text} / ${right.text}${label}`
 }
 
 /**

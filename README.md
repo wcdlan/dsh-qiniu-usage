@@ -64,8 +64,25 @@ The resource-pack (finance) API only accepts Qiniu **management credentials**
 npm install
 npm run build      # lib/index.js, lib/client.js, lib/types/**
 npm run check      # tsc --noEmit
-npm test           # vitest (238 tests)
+npm test           # vitest (275 tests)
 ```
+
+To iterate on the panel's layout, render it to HTML and screenshot it, rather than
+guessing at CSS:
+
+```bash
+node scripts/preview.mjs
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --headless=new --disable-gpu --no-sandbox --hide-scrollbars \
+  --user-data-dir="$PWD/.tmp/chrome-profile" --virtual-time-budget=2500 \
+  --force-device-scale-factor=2 --window-size=820,1500 \
+  --screenshot="$PWD/.tmp/shot.png" "file://$PWD/.tmp/preview.html?w=820&diag=1"
+```
+
+`?w=<px>` sets the simulated panel width (use this rather than `--window-size` for
+narrow widths — Chrome clamps its window to ~500px and merely crops the shot, which
+looks like an overflow bug but is not). `?diag=1` lists any element wider than the
+panel, for locating whatever breaks the layout.
 
 The build produces two artifacts with different contracts:
 

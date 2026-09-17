@@ -1,31 +1,25 @@
 /**
- * 资源包利用情况：当月利用率进度条 + 逐包已用/到期 + 按需下钻。
+ * 资源包利用情况：当月利用率 + 逐包已用/到期 + 按需下钻。
  *
  * 设计文档 §9.2 与 §3.3 的**口径提醒**：`month-overview` 是当月口径，
  * `list` 的 `used_amount` 是资源包**生命周期累计**。两者都展示时必须分别标注，
- * 否则用户会把生命周期用量误读成当月用量。
+ * 否则用户会把生命周期用量误读成当月用量 —— 两个区块各自带徽标。
+ *
+ * 布局决定（本次改版重点）：
+ *
+ * - 逐包**每一行加分隔线 + 上下留白**。原先条形图满宽且包与包之间没有分隔，
+ *   视觉上会"串"到下一个包，让人以为条形属于下面的名字。
+ * - 数量与百分比收进标题行右侧，用 `tabular-nums` 对齐；条形与到期信息、下钻按钮
+ *   同处第二行，形成稳定的两行节奏。
+ * - 已用完的包整体降透明度，而不是把 0 值藏起来。
  *
  * @module dsh-qiniu-usage/client/RespackBars
  */
 
-import { createElement, useState, type CSSProperties, type ReactNode } from 'react'
+import { createElement, useState, type ReactNode } from 'react'
 import type { RespackDetail, RespackSnapshot } from '../qiniu/respack.ts'
-import { formatAmount, formatMonthDay, formatPercent } from './format.ts'
-import {
-  badgeStyle,
-  barFillStyle,
-  barTrackStyle,
-  buttonStyle,
-  captionStyle,
-  emptyStyle,
-  mutedStyle,
-  sectionTitleStyle,
-  tableStyle,
-  tdNumericStyle,
-  tdStyle,
-  thNumericStyle,
-  thStyle,
-} from './styles.ts'
+import { convertAmount, formatAmountPair, formatMonthDay, formatPercent } from './format.ts'
+import { barFillStyle, barTone, cls } from './styles.ts'
 
 /** 翻译函数签名。 */
 type Translate = (key: string, params?: Record<string, unknown>) => string
@@ -40,20 +34,12 @@ export interface RespackBarsProps {
   t: Translate
 }
 
-/** 利用率条的颜色档位：>90% 危险，>75% 警告。 */
-function utilizationTone(fraction: number): 'normal' | 'warn' | 'danger' {
-  if (fraction >= 0.9) return 'danger'
-  if (fraction >= 0.75) return 'warn'
-  return 'normal'
-}
-
 /** 到期文案：优先"还有 N 天"，已过期/无到期时间各有分支。 */
-function expiryText(
-  pack: RespackSnapshot['packages'][number],
-  t: Translate,
-): string {
+function expiryText(pack: RespackSnapshot['packages'][number], t: Translate): string {
   if (pack.effectiveEnd === '') return ''
-  if (pack.daysRemaining === undefined) return t('qiniu.respack.expiresOn', { date: pack.effectiveEnd })
+  if (pack.daysRemaining === undefined) {
+    return t('qiniu.respack.expiresOn', { date: pack.effectiveEnd })
+  }
   if (pack.daysRemaining < 0) return t('qiniu.respack.expired')
   return t('qiniu.respack.expires', { days: pack.daysRemaining })
 }
@@ -61,35 +47,52 @@ function expiryText(
 /** 下钻明细表。 */
 function renderDetail(detail: RespackDetail | undefined, t: Translate): ReactNode {
   if (detail === undefined) {
-    return createElement('div', { style: { ...mutedStyle, padding: '4px 0' } }, t('qiniu.respack.detail.loading'))
+    return createElement(
+      'div',
+      { className: `${cls.detail} ${cls.muted}`, style: { fontSize: '11.5px' } },
+      t('qiniu.respack.detail.loading'),
+    )
   }
   if (detail.deductDetails.length === 0) {
-    return createElement('div', { style: { ...mutedStyle, padding: '4px 0' } }, t('qiniu.respack.detail.none'))
+    return createElement(
+      'div',
+      { className: `${cls.detail} ${cls.muted}`, style: { fontSize: '11.5px' } },
+      t('qiniu.respack.detail.none'),
+    )
   }
+
   return createElement(
-    'table',
-    { style: { ...tableStyle, marginTop: '4px' } },
+    'div',
+    { className: cls.detail },
     createElement(
-      'thead',
-      null,
+      'table',
+      { className: cls.detailTable },
       createElement(
-        'tr',
+        'thead',
         null,
-        createElement('th', { style: thStyle }, t('qiniu.respack.detail.deductDate')),
-        createElement('th', { style: thStyle }, t('qiniu.respack.detail.deductStatus')),
-        createElement('th', { style: thNumericStyle }, `${t('qiniu.respack.detail.deductAmount')} (${detail.unit})`),
-      ),
-    ),
-    createElement(
-      'tbody',
-      null,
-      ...detail.deductDetails.map((row, index) =>
         createElement(
           'tr',
-          { key: `${row.deductDate}-${index}` },
-          createElement('td', { style: tdStyle }, formatMonthDay(row.deductDate)),
-          createElement('td', { style: { ...tdStyle, ...mutedStyle } as CSSProperties }, row.deductStatusLabel),
-          createElement('td', { style: tdNumericStyle }, formatAmount(row.deductAmount, '')),
+          null,
+          createElement('th', null, t('qiniu.respack.detail.deductDate')),
+          createElement('th', null, t('qiniu.respack.detail.deductStatus')),
+          createElement(
+            'th',
+            null,
+            `${t('qiniu.respack.detail.deductAmount')}${detail.unit === '' ? '' : ` (${detail.unit})`}`,
+          ),
+        ),
+      ),
+      createElement(
+        'tbody',
+        null,
+        ...detail.deductDetails.map((row, index) =>
+          createElement(
+            'tr',
+            { key: `${row.deductDate}-${index}` },
+            createElement('td', null, formatMonthDay(row.deductDate)),
+            createElement('td', { className: cls.muted }, row.deductStatusLabel),
+            createElement('td', null, convertAmount(row.deductAmount, detail.unit).text),
+          ),
         ),
       ),
     ),
@@ -106,12 +109,7 @@ export function RespackBars({ snapshot, details, onLoadDetail, t }: RespackBarsP
   const [openPacks, setOpenPacks] = useState<Record<string, boolean>>({})
 
   if (snapshot.items.length === 0 && snapshot.packages.length === 0) {
-    return createElement(
-      'div',
-      { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-      createElement('h4', { style: sectionTitleStyle }, t('qiniu.respack.heading')),
-      createElement('div', { style: emptyStyle }, t('qiniu.empty.noRespack')),
-    )
+    return createElement('div', { className: cls.empty }, t('qiniu.empty.noRespack'))
   }
 
   const toggle = (key: string, orderHash: string, poId: number): void => {
@@ -122,100 +120,142 @@ export function RespackBars({ snapshot, details, onLoadDetail, t }: RespackBarsP
 
   return createElement(
     'div',
-    { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-    createElement(
-      'h4',
-      { style: sectionTitleStyle },
-      t('qiniu.respack.heading'),
-      ' ',
-      createElement('span', { style: badgeStyle }, t('qiniu.respack.monthScope')),
-    ),
+    { style: { display: 'flex', flexDirection: 'column', gap: '16px' } },
 
-    // 当月利用率：每个计费项一条。
-    ...snapshot.items.map((item) =>
-      createElement(
-        'div',
-        { key: `${item.itemName}-${item.zoneName}`, style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
-        createElement(
+    // 当月口径
+    snapshot.items.length > 0
+      ? createElement(
           'div',
-          { style: { display: 'flex', alignItems: 'baseline', gap: '6px' } },
-          createElement('span', { style: { fontWeight: 500 } }, item.itemName),
-          item.zoneName === '' ? null : createElement('span', { style: mutedStyle }, item.zoneName),
-          createElement('span', { style: { flex: '1 1 auto' } }),
-          createElement('span', { style: { fontVariantNumeric: 'tabular-nums', fontWeight: 600 } }, formatPercent(item.utilization)),
-        ),
-        createElement(
-          'div',
-          { style: barTrackStyle },
-          createElement('div', {
-            style: barFillStyle(item.utilization, utilizationTone(item.utilization)),
+          { className: cls.items },
+          ...snapshot.items.map((item) => {
+            const capacity = convertAmount(item.monthCapacity, item.unit)
+            const used = convertAmount(item.monthUsed, item.unit)
+            const remain = convertAmount(item.monthRemain, item.unit)
+            const label = capacity.unitLabel
+            return createElement(
+              'div',
+              { key: `${item.itemName}-${item.zoneName}`, className: cls.item },
+              createElement(
+                'div',
+                { className: cls.itemHead },
+                createElement('span', { className: cls.itemName }, item.itemName),
+                item.zoneName === ''
+                  ? null
+                  : createElement(
+                      'span',
+                      { className: `${cls.badge} ${cls.badgeSoft}` },
+                      item.zoneName,
+                    ),
+                createElement(
+                  'span',
+                  { className: `${cls.num} ${cls.numStrong}`, style: { marginLeft: 'auto' } },
+                  formatPercent(item.utilization),
+                ),
+              ),
+              createElement(
+                'div',
+                { className: cls.bar },
+                createElement('div', {
+                  className: cls.barFill,
+                  style: barFillStyle(item.utilization, barTone(item.utilization)),
+                }),
+              ),
+              createElement(
+                'div',
+                { className: cls.packMeta },
+                `${t('qiniu.respack.capacity')} ${capacity.text} · `
+                + `${t('qiniu.respack.used')} ${used.text} · `
+                + `${t('qiniu.respack.remain')} ${remain.text}`
+                + (label === '' ? '' : ` ${label}`),
+              ),
+            )
           }),
-        ),
-        createElement(
-          'div',
-          { style: mutedStyle },
-          `${t('qiniu.respack.capacity')} ${formatAmount(item.monthCapacity, item.unit)} · `
-          + `${t('qiniu.respack.used')} ${formatAmount(item.monthUsed, item.unit)} · `
-          + `${t('qiniu.respack.remain')} ${formatAmount(item.monthRemain, item.unit)}`,
-        ),
-      ),
-    ),
+        )
+      : null,
 
-    // 逐包明细：生命周期口径，单独标注。
+    // 生命周期口径：逐包
     snapshot.packages.length > 0
       ? createElement(
           'div',
-          { style: { display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '2px' } },
+          { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
           createElement(
             'div',
-            { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
-            createElement('span', { style: sectionTitleStyle }, t('qiniu.respack.packs')),
-            createElement('span', { style: badgeStyle }, t('qiniu.respack.packLifecycle')),
+            { className: cls.subhead },
+            createElement('span', { className: cls.subheadTitle }, t('qiniu.respack.packs')),
+            createElement('span', { className: cls.badge }, t('qiniu.respack.packLifecycle')),
           ),
-          ...snapshot.packages.map((pack) => {
-            const key = `${pack.orderHash}:${pack.poId}`
-            const isOpen = openPacks[key] === true
-            const detail = details[key]
-            return createElement(
-              'div',
-              { key, style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
-              createElement(
+          createElement(
+            'div',
+            { className: cls.packs },
+            ...snapshot.packages.map((pack) => {
+              const key = `${pack.orderHash}:${pack.poId}`
+              const isOpen = openPacks[key] === true
+              const detail = details[key]
+              const done = pack.status === 3 || pack.utilization >= 1
+              const expiry = expiryText(pack, t)
+
+              return createElement(
                 'div',
-                { style: { display: 'flex', alignItems: 'baseline', gap: '6px', flexWrap: 'wrap' } },
-                createElement('span', { style: { fontWeight: 500 } }, pack.name),
-                createElement('span', { style: badgeStyle }, pack.statusLabel),
-                createElement('span', { style: { flex: '1 1 auto' } }),
-                createElement(
-                  'span',
-                  { style: { fontVariantNumeric: 'tabular-nums' } },
-                  `${formatAmount(pack.usedAmount, pack.unit)} / ${formatAmount(pack.totalAmount, pack.unit)}`
-                  + ` (${formatPercent(pack.utilization)})`,
-                ),
-              ),
-              createElement(
-                'div',
-                { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+                { key, className: done ? `${cls.pack} ${cls.packDone}` : cls.pack },
                 createElement(
                   'div',
-                  { style: { ...barTrackStyle, flex: '1 1 auto' } },
-                  createElement('div', { style: barFillStyle(pack.utilization, 'normal') }),
+                  { className: cls.packHead },
+                  createElement('span', { className: cls.packName }, pack.name),
+                  createElement(
+                    'span',
+                    { className: done ? `${cls.badge} ${cls.badgeInactive}` : cls.badge },
+                    pack.statusLabel,
+                  ),
+                  createElement(
+                    'span',
+                    { className: cls.packFigures },
+                    createElement(
+                      'span',
+                      null,
+                      formatAmountPair(pack.usedAmount, pack.totalAmount, pack.unit),
+                    ),
+                    createElement(
+                      'span',
+                      { className: `${cls.num} ${cls.packPercent}` },
+                      formatPercent(pack.utilization),
+                    ),
+                  ),
                 ),
-                createElement('span', { style: mutedStyle }, expiryText(pack, t)),
-                pack.carryOverLabel === '' ? null : createElement('span', { style: badgeStyle }, pack.carryOverLabel),
                 createElement(
-                  'button',
-                  {
-                    type: 'button',
-                    style: buttonStyle,
-                    onClick: () => toggle(key, pack.orderHash, pack.poId),
-                  },
-                  t('qiniu.respack.detail'),
+                  'div',
+                  { className: cls.packRow },
+                  createElement(
+                    'div',
+                    { className: `${cls.bar} ${cls.packBar}` },
+                    createElement('div', {
+                      className: cls.barFill,
+                      style: barFillStyle(pack.utilization, barTone(pack.utilization)),
+                    }),
+                  ),
+                  createElement(
+                    'span',
+                    { className: cls.packMeta },
+                    [expiry, pack.carryOverLabel].filter((part) => part !== '').join(' · '),
+                  ),
+                  createElement(
+                    'button',
+                    {
+                      type: 'button',
+                      className: `${cls.btn} ${cls.btnGhost}`,
+                      onClick: () => toggle(key, pack.orderHash, pack.poId),
+                    },
+                    t('qiniu.respack.detail'),
+                  ),
                 ),
-              ),
-              isOpen ? renderDetail(detail, t) : null,
-            )
-          }),
-          createElement('div', { style: captionStyle }, t('qiniu.respack.scopeHint')),
+                isOpen ? renderDetail(detail, t) : null,
+              )
+            }),
+          ),
+          createElement(
+            'div',
+            { className: cls.muted, style: { fontSize: '11px' } },
+            t('qiniu.respack.scopeHint'),
+          ),
         )
       : null,
   )

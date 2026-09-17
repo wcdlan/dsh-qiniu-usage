@@ -76,7 +76,7 @@ export const zh = {
 
   // 凭据
   'qiniu.credentials.heading': '凭据',
-  'qiniu.credentials.hint': '填的是凭据的**值**；左侧灰字是该值存放的环境变量**名**。',
+  'qiniu.credentials.hint': '输入框里填的是凭据的值；等宽灰字是该值存放的环境变量名。',
   'qiniu.credentials.accessKey': 'AccessKey',
   'qiniu.credentials.secretKey': 'SecretKey',
   'qiniu.credentials.accessKeyPlaceholder': '粘贴 AccessKey 值',
@@ -169,7 +169,7 @@ export const en: LocaleDictOf<typeof NS> = {
   'qiniu.respack.scopeHint': '"Used" is the pack lifetime total; the month-to-date view is the utilisation above.',
 
   'qiniu.credentials.heading': 'Credentials',
-  'qiniu.credentials.hint': 'Enter the credential **value**; the grey name at left is the environment-variable **name** it is stored under.',
+  'qiniu.credentials.hint': 'The input takes the credential value; the monospace name is the environment variable it is stored under.',
   'qiniu.credentials.accessKey': 'AccessKey',
   'qiniu.credentials.secretKey': 'SecretKey',
   'qiniu.credentials.accessKeyPlaceholder': 'Paste the AccessKey value',
