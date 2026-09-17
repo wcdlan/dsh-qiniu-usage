@@ -16,6 +16,7 @@ import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { isLoopbackRequest } from './host/loopback.ts'
 import { readJsonBody, writeJson } from './host/http.ts'
 import type { DaySelector, KeySelector, QiniuUsageService } from './service.ts'
+import { toSourceError } from './service.ts'
 
 /** 本插件所有路由的前缀。 */
 export const API_PREFIX = '/api/dsh-qiniu-usage'
@@ -164,14 +165,62 @@ export function makeKeysRoute(service: QiniuUsageService): WebRoute {
   }
 }
 
+/** `order_hash` 形态：十六进制/md5 类标识，限制长度与字符集。 */
+const ORDER_HASH = /^[A-Za-z0-9_-]{1,64}$/
+
 /**
- * 本插件在 M1 阶段注册的全部路由。
+ * `GET /respack/detail?order_hash=&po_id=` —— 单包下钻。
  *
- * M2 追加 `respack/detail`，M4 追加 `credentials` 的 GET/POST。
+ * 两个参数都必须来自 `respack/list` 的返回，因此这里只做形态校验；任何不合形态的
+ * 值直接 400，不带上游 —— 避免把任意文本拼进签名请求的 query。
+ *
+ * @param service - 用量服务。
+ * @returns 路由定义。
+ */
+export function makeRespackDetailRoute(service: QiniuUsageService): WebRoute {
+  return {
+    kind: 'exact',
+    path: `${API_PREFIX}/respack/detail`,
+    handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+      if (!guard(req, res, ['GET'])) return
+      const url = requestUrl(req)
+
+      const orderHash = (url.searchParams.get('order_hash') ?? '').trim()
+      const poIdRaw = (url.searchParams.get('po_id') ?? '').trim()
+      const poId = Number(poIdRaw)
+
+      if (!ORDER_HASH.test(orderHash) || poIdRaw === '' || !Number.isSafeInteger(poId) || poId < 0) {
+        writeJson(
+          res,
+          400,
+          { ok: false, error: 'invalid order_hash or po_id' },
+          { 'cache-control': 'no-store' },
+        )
+        return
+      }
+
+      try {
+        const detail = await service.respackDetail(orderHash, poId)
+        ok(res, { ok: true, detail })
+      } catch (error) {
+        // 下钻失败只影响这一个面板，不抛给上层；错误形状与 /overview 的 errors 一致。
+        ok(res, { ok: false, detail: null, error: toSourceError(error, 'respack') })
+      }
+    },
+  }
+}
+
+/**
+ * 本插件当前注册的全部路由。
  *
  * @param service - 用量服务。
  * @returns 路由数组。
  */
 export function makeRoutes(service: QiniuUsageService): WebRoute[] {
-  return [makeOverviewRoute(service), makeRefreshRoute(service), makeKeysRoute(service)]
+  return [
+    makeOverviewRoute(service),
+    makeRefreshRoute(service),
+    makeKeysRoute(service),
+    makeRespackDetailRoute(service),
+  ]
 }

@@ -28,6 +28,13 @@ export interface QiniuSignRequest {
    */
   url: URL
   /**
+   * query 串，**含前导 `?`**。必须与实际请求逐字节一致（易错点 2）。
+   *
+   * 省略时用 `url.search`。签名与请求共用同一个串这件事因此是 API 层面的结构
+   * 保证，而不是靠调用方自觉。
+   */
+  queryString?: string
+  /**
    * `Content-Type` 头。**只有实际会出现在请求里的头才可传入**：
    * GET 请求必须省略。传入 `application/octet-stream` 时 body 不参与签名。
    */
@@ -101,8 +108,9 @@ export function buildSigningStr(request: QiniuSignRequest): string {
   // url.pathname 已含前导 '/'，且 URL 对象保证 pathname 非空。
   let signingStr = `${method.toUpperCase()} ${url.pathname}`
 
-  // url.search 自带前导 '?'，空 query 时为空串 —— 逐字节共用，不再手工拼接。
-  const query = url.search
+  // query 串逐字节共用（易错点 2）。url.search 自带前导 '?'，空 query 时为空串。
+  // 允许显式传入，用于"先构造 query 串、再拼 URL"的调用路径。
+  const query = request.queryString ?? url.search
   if (query.length > 0) {
     signingStr += query
   }
@@ -183,8 +191,62 @@ export function signRequest(
     authorization: `Qiniu ${accessKey}:${encodedSign}`,
     encodedSign,
     signingStr,
-    query: request.url.search,
+    query: request.queryString ?? request.url.search,
   }
+}
+
+/**
+ * 为一次七牛管理 API 调用生成 **已签名 URL 与请求头**。
+ *
+ * 这是服务层应当使用的入口：query 串在这里被构造一次，同时用于签名与最终 URL，
+ * 因此"签名串与请求串逐字节一致"由结构保证，而不是靠调用方自觉。
+ *
+ * ```ts
+ * const { url, headers } = signQiniuRequest(ak, sk, {
+ *   method: 'GET',
+ *   baseUrl: 'https://api.qiniu.com',
+ *   path: '/billing-api/v1/respack/list',
+ *   query: [['page', 1], ['page_size', 200]],
+ * })
+ * ```
+ *
+ * GET 调用**不会**带上 `Content-Type`（易错点 3）。
+ *
+ * @param accessKey - 七牛 AccessKey。
+ * @param secretKey - 七牛 SecretKey。
+ * @param request - 方法、基地址、路径与可选 query/头/body。
+ * @returns 已签名 URL、`Authorization` 头与签名串（排障用）。
+ */
+export function signQiniuRequest(
+  accessKey: string,
+  secretKey: string,
+  request: {
+    method: string
+    baseUrl: string
+    path: string
+    query?: Iterable<readonly [string, string | number | undefined]>
+    contentType?: string
+    xQiniuHeaders?: Record<string, string>
+    body?: string
+  },
+): { url: URL; headers: Record<string, string>; signature: QiniuSignature } {
+  const rawQuery = request.query === undefined ? '' : buildQueryString(request.query)
+  const queryString = rawQuery === '' ? '' : `?${rawQuery}`
+  const url = new URL(`${request.baseUrl.replace(/\/+$/, '')}${request.path}${queryString}`)
+
+  const signature = signRequest(accessKey, secretKey, {
+    method: request.method,
+    url,
+    queryString,
+    ...(request.contentType === undefined ? {} : { contentType: request.contentType }),
+    ...(request.xQiniuHeaders === undefined ? {} : { xQiniuHeaders: request.xQiniuHeaders }),
+    ...(request.body === undefined ? {} : { body: request.body }),
+  })
+
+  const headers: Record<string, string> = { authorization: signature.authorization }
+  if (request.contentType !== undefined) headers['content-type'] = request.contentType
+
+  return { url, headers, signature }
 }
 
 /**

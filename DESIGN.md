@@ -719,19 +719,21 @@ const Config = z.object({
 - [ ] 模型按 total 降序
 
 **资源包归一**
-- [ ] `month-overview` 分页循环
-- [ ] `list` 分页循环 + 显式 `page_size=200`
-- [ ] `status` / `carry_over_policy` 文案映射
-- [ ] `daysRemaining` 计算（按东八区日期）
-- [ ] `code != 0` → 错误码文案表
+- [x] `month-overview` 分页循环
+- [x] `list` 分页循环 + 显式 `page_size=200`
+- [x] `status` / `carry_over_policy` 文案映射
+- [x] `daysRemaining` 计算（按东八区日期）
+- [x] `code != 0` → 错误码文案表
+- [x] `deduct_amount` 字符串与数字两种形态都接受
+- [x] 分页触顶（>5 页）时给出告警而不是静默截断
 
 **宿主**
-- [ ] 路由全部 loopback-fenced
-- [ ] 缓存键含 day/key/granularity
-- [ ] single-flight 合并并发
-- [ ] 全局上游限速 ≥250ms
-- [ ] 用量与资源包失败隔离
-- [ ] 卸载时 dispose 路由与定时器
+- [x] 路由全部 loopback-fenced
+- [x] 缓存键含 day/key/granularity
+- [x] single-flight 合并并发
+- [x] 全局上游限速 ≥250ms
+- [x] 用量与资源包失败隔离
+- [x] 卸载时 dispose 路由与定时器
 
 **客户端**
 - [x] `settings.section` order 152
@@ -785,7 +787,24 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 `ReactNode`，返回 `unknown` 会以 "Type 'unknown' is not assignable to type
 'ReactNode'" 的形式报在 register 的调用点上，不好定位。
 
-### 15.4 构建工具链：esbuild + 手写 ModuleLoader 外壳
+### 15.4 资源包上游的三个实测事实（已核官方文档 2025-09-10 版）
+
+核对 <https://developer.qiniu.com/af/10420/financial-external-api-documentation> 后确认，
+设计文档 §3.3 的**字段名全部正确**，但有三点文档没写清：
+
+1. **`page_size` 上限是 200**（官方原文"默认20，最大不超过200"）。所以必须循环取页，
+   且循环要有硬上限 —— 本实现取 {@link MAX_PAGES} = 5，触顶时写入 `warnings`
+   而不是静默截断。
+2. **`deduct_amount` 文档标 `string`，示例却写数字**，而且官方示例那段 JSON 本身
+   有语法错误（`"deduct_amount: 1024` 少了引号）。解析必须两种都吃 ——
+   归一函数里用 `toNumber()` 统一处理，测试里两种形态都钉住了。
+3. **`month-overview` 也是分页接口**，不能当单页返回处理。
+
+另外：官方示例的请求里带了 `Content-Type: application/x-www-form-urlencoded`，但
+GET 带这个头会让签名串多一行。本实现按 §3.2 易错点 3 的做法**不带**，签名器对
+GET 永远省略 `Content-Type`。
+
+### 15.5 构建工具链：esbuild + 手写 ModuleLoader 外壳
 
 `tsdown` 的 output 形态无法直接产出 `window.__ModuleLoader__.load({...})`，
 且参考包**都没发布构建配置**。M0 的解法是用 esbuild（打成 CJS）+ 一个薄包装

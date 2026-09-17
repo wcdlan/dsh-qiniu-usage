@@ -16,7 +16,8 @@ import { RateLimiter, SingleFlight, TtlCache } from './core/cache.ts'
 import type { CredentialAccess } from './credentials.ts'
 import { MissingCredentialsError } from './credentials.ts'
 import { QiniuUpstreamError, fetchUpstreamData } from './qiniu/http.ts'
-import { buildQueryString, signRequest } from './qiniu/sign.ts'
+import { signQiniuRequest } from './qiniu/sign.ts'
+import { RespackClient, type RespackDetail, type RespackPack, type RespackSnapshot } from './qiniu/respack.ts'
 import { extractUsageKeys, normalizeUsage, type UsageSnapshot } from './qiniu/usage.ts'
 import type { RawUsageData } from './qiniu/types.ts'
 import type { ResolvedConfig } from './config.ts'
@@ -44,7 +45,7 @@ export interface SourceError {
 export interface OverviewPayload {
   ok: boolean
   usage: UsageSnapshot | null
-  respack: null
+  respack: RespackSnapshot | null
   errors: SourceError[]
   fetchedAt: string
 }
@@ -181,6 +182,10 @@ export class QiniuUsageService {
   readonly #sleep: (ms: number) => Promise<void>
   readonly #overviewCache: TtlCache<UsageFetchResult>
   readonly #inflight = new SingleFlight<UsageFetchResult>()
+  readonly #respackCache: TtlCache<RespackSnapshot>
+  readonly #respackInflight = new SingleFlight<RespackSnapshot>()
+  /** 上一次成功取到的逐包明细，供下钻补齐上游未返回的字段。 */
+  #lastPacks: RespackPack[] = []
 
   /**
    * @param options - 配置、凭据访问器与可注入的 fetch/时钟/睡眠。
@@ -198,6 +203,7 @@ export class QiniuUsageService {
     })
     const maxEntries = options.maxCacheEntries ?? 200
     this.#overviewCache = new TtlCache<UsageFetchResult>({ maxEntries, now: this.#now })
+    this.#respackCache = new TtlCache<RespackSnapshot>({ maxEntries, now: this.#now })
   }
 
   /** 当前配置。 */
@@ -220,6 +226,7 @@ export class QiniuUsageService {
   applyConfig(config: ResolvedConfig): void {
     this.#config = config
     this.#overviewCache.clear()
+    this.#respackCache.clear()
   }
 
   /**
@@ -230,24 +237,26 @@ export class QiniuUsageService {
    * @returns 载荷；失败被隔离在 `errors` 里。
    */
   async overview(day: DaySelector, key: KeySelector): Promise<OverviewPayload> {
+    // 两个数据源并发发起（受同一限速队列节流），失败互不影响。
     const [usageResult, respackResult] = await Promise.allSettled([
       this.getUsage(day, key),
-      // 资源包在 M2 落地；现在返回 null，但失败隔离的骨架已经就位。
-      Promise.resolve(null),
+      this.getRespack(),
     ])
 
     const errors: SourceError[] = []
     let usage: UsageSnapshot | null = null
+    let respack: RespackSnapshot | null = null
 
     if (usageResult.status === 'fulfilled') usage = usageResult.value.snapshot
     else errors.push(toSourceError(usageResult.reason, 'usage'))
 
-    if (respackResult.status === 'rejected') errors.push(toSourceError(respackResult.reason, 'respack'))
+    if (respackResult.status === 'fulfilled') respack = respackResult.value
+    else errors.push(toSourceError(respackResult.reason, 'respack'))
 
     return {
       ok: errors.length === 0,
       usage,
-      respack: null,
+      respack,
       errors,
       fetchedAt: new Date(this.#now()).toISOString(),
     }
@@ -304,7 +313,66 @@ export class QiniuUsageService {
    */
   async refresh(day: DaySelector, key: KeySelector): Promise<OverviewPayload> {
     this.#overviewCache.clear()
+    this.#respackCache.clear()
     return this.overview(day, key)
+  }
+
+  /**
+   * 取资源包快照（带缓存与 single-flight）。
+   *
+   * 资源包数据日更，所以用 {@link ResolvedConfig.dashboardTtlSec}（默认 10 分钟）
+   * 而不是今天的 60 秒。
+   *
+   * @returns 资源包快照。
+   * @throws {MissingCredentialsError | QiniuUpstreamError} 缺凭据、无账单权限或上游错误。
+   */
+  async getRespack(): Promise<RespackSnapshot> {
+    const cacheKey = 'respack:snapshot'
+    const cached = this.#respackCache.get(cacheKey)
+    if (cached !== undefined) return cached
+
+    return this.#respackInflight.run(cacheKey, async () => {
+      const raced = this.#respackCache.get(cacheKey)
+      if (raced !== undefined) return raced
+
+      const snapshot = await (await this.#respackClient()).snapshot()
+      this.#respackCache.set(cacheKey, snapshot, this.#config.dashboardTtlSec * 1000)
+      this.#lastPacks = snapshot.packages
+      return snapshot
+    })
+  }
+
+  /**
+   * 单包下钻。
+   *
+   * @param orderHash - 订单唯一编号。
+   * @param poId - 商品订单编号。
+   * @returns 归一后的详情。
+   * @throws {MissingCredentialsError | QiniuUpstreamError} 缺凭据或上游错误。
+   */
+  async respackDetail(orderHash: string, poId: number): Promise<RespackDetail> {
+    const pack = this.#lastPacks.find(
+      (candidate) => candidate.orderHash === orderHash && candidate.poId === poId,
+    )
+    const client = await this.#respackClient()
+    return client.detail(orderHash, poId, pack)
+  }
+
+  /** 按当前凭据构造财务 API 客户端（每次调用重新解析凭据）。 */
+  async #respackClient(): Promise<RespackClient> {
+    const { accessKey, secretKey } = await this.#credentials.resolveKeyPair(
+      this.#config.accessKeyRef,
+      this.#config.secretKeyRef,
+    )
+    return new RespackClient({
+      baseUrl: this.#config.financeBaseUrl,
+      accessKey,
+      secretKey,
+      fetchImpl: this.#fetch,
+      schedule: (task) => this.#limiter.run(task),
+      now: this.#now,
+      sleepImpl: (ms) => this.#sleep(ms),
+    })
   }
 
   /** 某个上游 Key 是否配了 Bearer token。 */
@@ -361,23 +429,25 @@ export class QiniuUsageService {
       this.#config.secretKeyRef,
     )
 
-    const query = buildQueryString([
-      ['granularity', plan.granularity],
-      ['start', plan.start],
-      ['end', plan.end],
-      ['timezone', this.#config.timezone],
-    ])
-    const url = new URL(`${this.#config.usageBaseUrl}/v3/stat/usage?${query}`)
-
-    // 签名的 query 与请求的 query 是同一个字符串 —— 签名器直接读 url.search。
-    const signature = signRequest(accessKey, secretKey, { method: 'GET', url })
+    // query 串在这里构造一次，同时用于签名与最终 URL（签名器保证逐字节一致）。
+    // 用量接口是 qnaigc 域名，但它同样吃七牛管理凭证签名。
+    const { url, headers } = signQiniuRequest(accessKey, secretKey, {
+      method: 'GET',
+      baseUrl: this.#config.usageBaseUrl,
+      path: '/v3/stat/usage',
+      query: [
+        ['granularity', plan.granularity],
+        ['start', plan.start],
+        ['end', plan.end],
+        ['timezone', this.#config.timezone],
+      ],
+    })
 
     const data = await this.#limiter.run(() =>
-      fetchUpstreamData(
-        { url, method: 'GET', headers: { authorization: signature.authorization } },
-        'qnaigc',
-        { fetchImpl: this.#fetch, sleepImpl: (ms) => this.#sleep(ms) },
-      ),
+      fetchUpstreamData({ url, method: 'GET', headers }, 'qnaigc', {
+        fetchImpl: this.#fetch,
+        sleepImpl: (ms) => this.#sleep(ms),
+      }),
     )
 
     const snapshot = normalizeUsage({

@@ -10,7 +10,14 @@
 import { strict as assert } from 'node:assert'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { describe, it } from 'vitest'
-import { makeKeysRoute, makeOverviewRoute, makeRefreshRoute, parseDayParam, parseKeyParam } from '../src/routes.ts'
+import {
+  makeKeysRoute,
+  makeOverviewRoute,
+  makeRefreshRoute,
+  makeRespackDetailRoute,
+  parseDayParam,
+  parseKeyParam,
+} from '../src/routes.ts'
 import { QiniuUpstreamError, fetchUpstreamData, sanitizeErrorMessage } from '../src/qiniu/http.ts'
 import type { DaySelector, KeySelector, OverviewPayload } from '../src/service.ts'
 import { akskKeyGroups } from './fixtures/usage.ts'
@@ -69,8 +76,10 @@ function makeResponse(captured: CapturedResponse): ServerResponse {
 function makeServiceStub(): {
   service: Parameters<typeof makeOverviewRoute>[0]
   calls: { day: DaySelector; key: KeySelector }[]
+  detailCalls: { orderHash: string; poId: number }[]
 } {
   const calls: { day: DaySelector; key: KeySelector }[] = []
+  const detailCalls: { orderHash: string; poId: number }[] = []
   const payload = (): OverviewPayload => ({
     ok: true,
     usage: null,
@@ -91,8 +100,16 @@ function makeServiceStub(): {
       calls.push({ day, key: '' })
       return { keys: [] }
     },
+    respackDetail: async (orderHash: string, poId: number) => {
+      detailCalls.push({ orderHash, poId })
+      return { name: 'stub', deductDetails: [] }
+    },
   }
-  return { service: stub as unknown as Parameters<typeof makeOverviewRoute>[0], calls }
+  return {
+    service: stub as unknown as Parameters<typeof makeOverviewRoute>[0],
+    calls,
+    detailCalls,
+  }
 }
 
 describe('路由 · 入参白名单', () => {
@@ -413,8 +430,16 @@ describe('路由 · 与真实服务串联', () => {
     const { CredentialAccess } = await import('../src/credentials.ts')
     const { resolveConfig } = await import('../src/config.ts')
 
-    const fetchImpl = (async () =>
-      new Response(JSON.stringify({ status: true, data: akskKeyGroups }), { status: 200 })) as typeof fetch
+    // 用量与资源包都要有对应响应，否则会记一条 respack 错误。
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = input instanceof URL ? input : new URL(String(input))
+      if (url.pathname.startsWith('/billing-api/')) {
+        return new Response(JSON.stringify({ code: 0, message: 'Success', data: [] }), {
+          status: 200,
+        })
+      }
+      return new Response(JSON.stringify({ status: true, data: akskKeyGroups }), { status: 200 })
+    }) as typeof fetch
 
     const service = new QiniuUsageService({
       config: resolveConfig(),
@@ -445,5 +470,80 @@ describe('路由 · 与真实服务串联', () => {
     assert.equal(captured.status, 200)
     assert.equal(body.usage?.totals.total, 2_080_000)
     assert.equal(body.errors.length, 0)
+  })
+})
+
+describe('路由 · /respack/detail', () => {
+  it('拒绝非法 order_hash 或 po_id，且不打上游', async () => {
+    const bad = [
+      'order_hash=&po_id=1',
+      'order_hash=abc&po_id=',
+      'order_hash=abc&po_id=notanumber',
+      'order_hash=abc&po_id=-1',
+      'order_hash=abc&po_id=1.5',
+      `order_hash=${'x'.repeat(65)}&po_id=1`,
+      'order_hash=has%20space&po_id=1',
+    ]
+    for (const query of bad) {
+      const { service, detailCalls } = makeServiceStub()
+      const route = makeRespackDetailRoute(service)
+      const captured: CapturedResponse = {}
+      await route.handler(
+        makeRequest({ url: `/api/dsh-qiniu-usage/respack/detail?${query}` }),
+        makeResponse(captured) as ServerResponse,
+      )
+      assert.equal(captured.status, 400, `${query} 应被拒绝`)
+      assert.equal(detailCalls.length, 0, '非法参数不得触达服务层')
+    }
+  })
+
+  it('合法参数透传 order_hash 与 po_id', async () => {
+    const { service, detailCalls } = makeServiceStub()
+    const route = makeRespackDetailRoute(service)
+    const captured: CapturedResponse = {}
+    await route.handler(
+      makeRequest({
+        url: '/api/dsh-qiniu-usage/respack/detail?order_hash=f9cefba946e0b547a72abb4a9d4acc3c&po_id=524913',
+      }),
+      makeResponse(captured) as ServerResponse,
+    )
+    assert.equal(captured.status, 200)
+    assert.deepEqual(detailCalls, [{ orderHash: 'f9cefba946e0b547a72abb4a9d4acc3c', poId: 524913 }])
+    assert.equal((captured.body as { ok: boolean }).ok, true)
+  })
+
+  it('下钻失败时返回 ok=false 与结构化错误，而不是 500', async () => {
+    const { service } = makeServiceStub()
+    // 让 detail 抛错
+    ;(service as unknown as { respackDetail: () => Promise<never> }).respackDetail = async () => {
+      throw new QiniuUpstreamError('资源包详情获取失败', { code: 1011 })
+    }
+    const route = makeRespackDetailRoute(service)
+    const captured: CapturedResponse = {}
+    await route.handler(
+      makeRequest({ url: '/api/dsh-qiniu-usage/respack/detail?order_hash=abc123&po_id=1' }),
+      makeResponse(captured) as ServerResponse,
+    )
+    assert.equal(captured.status, 200, '下钻失败不应变成 5xx')
+    const body = captured.body as { ok: boolean; detail: unknown; error: { source: string; code: number } }
+    assert.equal(body.ok, false)
+    assert.equal(body.detail, null)
+    assert.equal(body.error.source, 'respack')
+    assert.equal(body.error.code, 1011)
+  })
+
+  it('非回环请求被拒绝', async () => {
+    const { service, detailCalls } = makeServiceStub()
+    const route = makeRespackDetailRoute(service)
+    const captured: CapturedResponse = {}
+    await route.handler(
+      makeRequest({
+        url: '/api/dsh-qiniu-usage/respack/detail?order_hash=abc123&po_id=1',
+        remoteAddress: '10.0.0.5',
+      }),
+      makeResponse(captured) as ServerResponse,
+    )
+    assert.equal(captured.status, 403)
+    assert.equal(detailCalls.length, 0)
   })
 })
