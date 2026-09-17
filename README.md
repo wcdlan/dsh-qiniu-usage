@@ -35,7 +35,7 @@ against Qiniu** — it never creates, modifies or bills anything.
 | | |
 |---|---|
 | Implemented | Signing, usage normalisation, resource packs, the settings panel, the credential form, the floating button |
-| Tests | 338 passing across 14 files (`npm test`) |
+| Tests | 353 passing across 16 files (`npm test`) |
 | Not yet done | **End-to-end run against a real Qiniu account** — every upstream fact in this plugin comes from documentation and fixtures. If something is off with real data, [`scripts/smoke.mjs`](#verify-against-a-real-account) is the tool that shows it. |
 
 The UI ships in Chinese and English and follows the host theme.
@@ -291,18 +291,30 @@ or the popover stops the traffic.
 npm install
 npm run build      # lib/index.js, lib/client.js, lib/types/**
 npm run check      # tsc --noEmit
-npm test           # vitest — 338 tests
+npm test           # vitest — 353 tests
 ```
 
 The build produces two artifacts with different contracts, both asserted by
-`scripts/build.mjs` after every build — a format drift fails the build rather
-than the browser:
+`scripts/build.mjs` **before the artifact is written** — a format drift fails the
+build rather than the browser, and a failed build cannot leave a broken
+`lib/client.js` behind:
 
 - `lib/index.js` — host half, self-contained ESM. No external `require`; the only
   import is `node:crypto`.
 - `lib/client.js` — browser half, a self-contained
   `window.__ModuleLoader__.load({ id, factory })` bundle with `react` as the only
   external.
+
+> **The two halves do not import symmetrically.** The host may import anything;
+> the browser half may only take *values* from pure modules (`react`, `src/client/**`,
+> `src/qiniu/usage.ts`). `src/qiniu/respack.ts` looks pure but reaches `node:crypto`
+> through `sign.ts`, so importing a single value from it breaks the whole client
+> bundle. Type-only imports are fine. This boundary is enforced by
+> `test/client-graph.test.ts`, which really runs esbuild over the client entry.
+>
+> `npm test` also asserts that `lib/*.js` are **not older than their inputs**, so a
+> stale artifact can never be mistaken for evidence. If that check fails, run
+> `npm run build` — don't go looking for a logic bug.
 
 ### Seeing the panel without a browser
 
@@ -313,6 +325,7 @@ guessing at CSS:
 node scripts/preview.mjs
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --headless=new --disable-gpu --no-sandbox --hide-scrollbars \
+  --disable-crashpad --crash-dumps-dir="$PWD/.tmp/crash" \
   --user-data-dir="$PWD/.tmp/chrome-profile" --virtual-time-budget=2500 \
   --force-device-scale-factor=2 --window-size=820,1500 \
   --screenshot="$PWD/.tmp/shot.png" "file://$PWD/.tmp/preview.html?w=820&diag=1"

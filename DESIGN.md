@@ -289,6 +289,19 @@ export function apply(ctx, config) {
 
 由 `@deepseek-ai/dsh-client-modules` 扫描已启用 Loader 条目，把 `exports["./client"]` 挂到 `/plugins/<pkg>/client.js`（多包共用 combo URL `/plugins/??<id>/client.js,…&rev=<hash>`），浏览器按需惰性加载。
 
+**⚠ 半区之间的 import 是不对称的**（§15.11 真实事故）：
+
+- 宿主半区可以自由 import 任何东西（`platform: 'node'`）。
+- 客户端半区**只能取值导入纯模块**：`react` 系列、`src/client/**`、
+  `src/qiniu/usage.ts`（自身只依赖类型）。`src/qiniu/respack.ts` 这类"看起来是纯函数、
+  实则经由 `sign.ts` 依赖 `node:crypto`"的模块，取它的任何一个值都会让**整个客户端
+  产物构建失败**。
+- 从宿主模块取**类型**是安全的（`import type` 编译期即被抹掉），面板组件大量这么用。
+- 纯展示函数（例如 FAB 的余量汇总）直接放 `src/client/` 下 —— 已有 `fab-position.ts`、
+  `format.ts` 两个先例。
+
+这条边界由 `test/client-graph.test.ts` 真跑一次浏览器构建来守（见 §15.9）。
+
 `cordis.patch.yml`：
 
 ```yaml
@@ -906,7 +919,7 @@ const Config = z.object({
 
 ---
 
-## 15. M0 实现记录：文档没预见到、但真会卡住的四点
+## 15. 实现记录：文档没预见到、但真会卡住的若干点（M0–M1）
 
 以下都是 M0 落地时由编译器/测试**当场抓出来**的，已写进代码与测试；记录在此，
 供 M1–M5 复用，避免重复踩。
@@ -1130,14 +1143,22 @@ store、路由、归一、签名都测得很细，唯独"注入面 → props →
 ### 15.9 构建工具链：esbuild + 手写 ModuleLoader 外壳
 
 `tsdown` 的 output 形态无法直接产出 `window.__ModuleLoader__.load({...})`，
-且参考包**都没发布构建配置**。M0 的解法是用 esbuild（打成 CJS）+ 一个薄包装
-（`scripts/build.mjs`），并**在构建后自检 7 项契约**（`verifyClientBundle`），
+且参考包**都没发布构建配置**。解法是用 esbuild（打成 CJS）+ 一个薄包装
+（`scripts/build.mjs`），并**在落盘前自检 8 项契约**（`verifyClientBundleSource`），
 形态一旦漂移就让构建失败，而不是等到浏览器里才发现。
+
+自检**必须在 `writeFile` 之前**（§15.11）：早期版本是先写再检，自检失败会留下一个
+已经写坏的 `lib/client.js`，而 `test/bundle.test.ts` 读的正是磁盘上这个文件 ——
+"构建失败"会被污染成"测试失败"，让人往错误方向查。
+
+esbuild 选项统一放在 `scripts/build-options.mjs`，**构建脚本与构建回归测试共用**
+（`test/client-graph.test.ts`）。测试若自己抄一份配置，脚本把 `platform` 改坏了
+测试仍会通过。
 
 宿主半区则相反：对照参考产物确认其**无任何外部 `require`**，因此 esbuild 用
 `external: []` 打成自包含 ESM，避免在 profile 环境里因依赖解析失败而装不上。
 
-产物体积对照：本插件客户端 bundle **4.5 KB**（dsh-usage 为 374 KB）—— 面板只做
+产物体积对照：本插件客户端 bundle **94.1 KB**（dsh-usage 为 374 KB）—— 面板只做
 表格与进度条，样式只用主题 token，这个量级是合理的。
 
 ### 15.10 ⚠ 当天用量上游不归属 Key；`api_key: "unknown"` 是哨兵值（第五个真实坑）
@@ -1185,3 +1206,63 @@ AK/SK 打 `/v3/stat/usage`，把四种请求摆在一起对比：
 最常见的口径**。现在 `test/fixtures/usage.ts` 里有 `akskUnattributed` 与
 `akskMaskedKeys` 两份实测形态。
 
+### 15.11 ⚠ 客户端**取值**导入宿主模块 = 构建直接炸；而当时测试是绿的（第六个真实坑）
+
+**现象**：`npm run build` 失败：
+
+```
+  ✓ lib/index.js          (host, esm, self-contained)
+✘ [ERROR] Could not resolve "node:crypto"
+    src/qiniu/sign.ts:19:44: import { createHmac, timingSafeEqual } from 'node:crypto'
+```
+
+宿主产物**已经打印成功**，客户端产物才报错 —— 只看半截日志很容易当成"构建通过"。
+
+**根因**：悬浮按钮的余量汇总 `sumMonthRemain` 当初放在 `src/qiniu/respack.ts`，
+而客户端是**取值**导入：
+
+```ts
+import { sumMonthRemain } from '../qiniu/respack.ts'   // ← 这一行
+```
+
+那个模块 `import { signQiniuRequest } from './sign.ts'`，`sign.ts` 又依赖
+`node:crypto`。esbuild 在 `platform: 'browser'` 下无法 resolve node 内置模块，
+于是**整个客户端产物构建不出来**。之所以此前一直没事：客户端对 `qiniu/*` 的其余
+导入全是 `import type`，编译期就被抹掉了。
+
+**为什么测试没拦住（两层，都要补）**：
+
+1. `test/bundle.test.ts` 断言的是**磁盘上的 `lib/client.js`**，而那个文件是上一次
+   成功构建留下的旧产物 —— 源码早就构建不出来了，测试照样全绿。
+2. 没有任何测试**真的跑一次浏览器构建**。`npm test` 全程在 node 环境下跑 vitest，
+   `node:crypto` 在那边完全可用。
+
+**修法**：
+
+- 纯展示函数下移到 `src/client/respack-summary.ts`。`src/client/` 放纯函数已有先例
+  （`fab-position.ts`、`format.ts`）；宿主 `qiniu/respack.ts` 不再导出它，并被
+  `test/client-graph.test.ts` 钉住（反过来断言宿主侧 `sumMonthRemain === undefined`）。
+- `scripts/build-options.mjs`：构建选项抽成共享模块。新增
+  `test/client-graph.test.ts` 用**同一份选项**真跑 esbuild，断言四件事：
+  能构建成功、产物里没有 `node:` 内置模块、所有 `require(...)` 都在白名单内、
+  满足 ModuleLoader 契约。
+- 契约自检 7 项 → 8 项（加"产物内的外部模块请求都在白名单内"），并改为落盘前执行。
+- `test/bundle.test.ts` 增加**新鲜度**断言：产物 mtime 不得早于 `src/` 下最新的文件，
+  否则明确提示先 `npm run build`，而不是拿旧产物当证据。
+- 补上 `sumMonthRemain` 自己的单测（`test/respack-summary.test.ts`，9 项）。此前只有
+  渲染测试间接覆盖，而"不同单位不能相加"这种行为在单位一致的 fixture 里根本看不出来。
+
+**反证**（每条都重放过）：
+
+| 重放的错误 | 结果 |
+|---|---|
+| 把取值导入加回客户端 | `client-graph` 4 条红（`Could not resolve "node:crypto"`），而**旧流程下 `npm test` 全绿** —— 这正是它当初漏出去的原因 |
+| 让构建"过得去"：把 `node:crypto` 设成 external | "产物含 node 内置模块""白名单外的请求"各红一条；构建脚本自检同时失败 |
+| 自检失败时是否留下坏产物 | 先写后检：`lib/client.js` 被覆盖成坏产物；改成先检后写后，mtime/md5 均不变 |
+| `touch src/client/index.ts` | 新鲜度断言红，提示先构建 |
+| 把 `sumMonthRemain` 改成不分单位求和 / 去掉非有限值防护 | 9 项汇总单测分别红 6 条 / 2 条 |
+
+**教训**：看到"测试通过"要先问一句**它读的是哪个时间的产物**。凡断言磁盘产物的测试，
+要么自己构建，要么检查新鲜度 —— 否则它验证的是历史而不是现在。另外双半区的 import
+**不对称**：宿主可以随便 import，客户端只能 import 纯模块；这条边界必须由可执行的
+守卫（真跑一次浏览器构建）来守，不能靠记性。

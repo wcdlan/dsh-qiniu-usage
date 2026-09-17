@@ -32,7 +32,7 @@
 | | |
 |---|---|
 | 已实现 | 签名、用量归一、资源包、设置页面板、凭据表单、悬浮按钮 |
-| 测试 | 338 项通过 / 14 个文件（`npm test`） |
+| 测试 | 353 项通过 / 16 个文件（`npm test`） |
 | 尚未完成 | **用真实七牛账号跑一遍端到端联调** —— 本插件里所有上游事实都来自官方文档与 fixture。若真实数据下有出入，[`scripts/smoke.mjs`](#用真实账号联调) 就是暴露问题的工具。 |
 
 界面提供中英文，并跟随宿主主题。
@@ -260,16 +260,26 @@ AK/SK 是必需项，`apiKeys[]` 只是可选的精度增强，不是主路径�
 npm install
 npm run build      # lib/index.js、lib/client.js、lib/types/**
 npm run check      # tsc --noEmit
-npm test           # vitest —— 338 项
+npm test           # vitest —— 353 项
 ```
 
-构建产出两个契约不同的产物，且 `scripts/build.mjs` 在每次构建后都会断言它们 ——
-形态一旦漂移就会**构建失败**，而不是等到浏览器里才发现：
+构建产出两个契约不同的产物，且 `scripts/build.mjs` 在**落盘之前**断言它们 ——
+形态一旦漂移就会**构建失败**，而不是等到浏览器里才发现；构建失败也不会留下一个
+写坏的 `lib/client.js`：
 
 - `lib/index.js` —— 宿主半区，自包含 ESM。无任何外部 `require`，唯一 import 是
   `node:crypto`。
 - `lib/client.js` —— 浏览器半区，自包含的
   `window.__ModuleLoader__.load({ id, factory })` 产物，`react` 是唯一外部依赖。
+
+> **两个半区的 import 不对称。** 宿主可以随便 import；浏览器半区只能从**纯模块**
+> 取值（`react`、`src/client/**`、`src/qiniu/usage.ts`）。`src/qiniu/respack.ts`
+> 看着是纯函数，实际经 `sign.ts` 摸到 `node:crypto` —— 从它取任何一个值都会让整个
+> 客户端产物构建失败。类型导入不受影响。这条边界由 `test/client-graph.test.ts`
+> 真跑一次 esbuild 来守。
+>
+> `npm test` 还会断言 `lib/*.js` **不比它们的输入旧** —— 过期产物不会被当成证据。
+> 这条失败时请直接 `npm run build`，不要去翻逻辑 bug。
 
 ### 不开浏览器也能看面板
 
@@ -279,6 +289,7 @@ npm test           # vitest —— 338 项
 node scripts/preview.mjs
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --headless=new --disable-gpu --no-sandbox --hide-scrollbars \
+  --disable-crashpad --crash-dumps-dir="$PWD/.tmp/crash" \
   --user-data-dir="$PWD/.tmp/chrome-profile" --virtual-time-budget=2500 \
   --force-device-scale-factor=2 --window-size=820,1500 \
   --screenshot="$PWD/.tmp/shot.png" "file://$PWD/.tmp/preview.html?w=820&diag=1"

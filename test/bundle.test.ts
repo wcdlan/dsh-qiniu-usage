@@ -13,7 +13,7 @@
 
 import { strict as assert } from 'node:assert'
 import { existsSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir, stat } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import vm from 'node:vm'
@@ -202,6 +202,60 @@ describe('产物 · 客户端半区 lib/client.js', () => {
     // 不应作为读取源（例如 `.accessKey.value`）。
     for (const forbidden of ['accessKey.value', 'secretKey.value', 'accessKey?.value', 'secretKey?.value']) {
       assert.ok(!source.includes(forbidden), `客户端不应读取 ${forbidden}`)
+    }
+  })
+})
+
+/**
+ * 产物**新鲜度**检查。
+ *
+ * 这个文件其余用例断言的都是"磁盘上那个 lib/*.js 长什么样"，而磁盘上的产物
+ * 可能比源码旧 —— 源码改坏之后旧产物仍在，测试全绿。真踩过：
+ * `sumMonthRemain` 被放进 `qiniu/respack.ts`（经 `sign.ts` → `node:crypto`），
+ * 浏览器产物其实已经构建不出来了，但 `npm test` 读的是上一次成功构建的旧
+ * `lib/client.js`，一路绿到 `npm run build` 才暴露。
+ *
+ * 依赖图本身的守卫在 `test/client-graph.test.ts`（真跑 esbuild）；这里只负责
+ * 让"拿旧产物当证据"这件事没法悄悄发生。
+ */
+describe('产物 · 新鲜度', () => {
+  it('lib/ 产物不早于源码（否则请先 npm run build）', async () => {
+    /** 收集一个路径（目录则递归）下最新的 mtime。 */
+    async function newestMtime(path: string): Promise<{ path: string; mtime: number }> {
+      const info = await stat(path)
+      if (info.isFile()) return { path, mtime: info.mtimeMs }
+
+      let newest = { path: '', mtime: 0 }
+      const entries = await readdir(path, { withFileTypes: true, recursive: true })
+      for (const entry of entries) {
+        if (!entry.isFile()) continue
+        const file = resolve(entry.parentPath, entry.name)
+        const { mtimeMs } = await stat(file)
+        if (mtimeMs > newest.mtime) newest = { path: file, mtime: mtimeMs }
+      }
+      return newest
+    }
+
+    // 两次构建的共同输入：src/ 全部文件 + 共享的 esbuild 选项模块。
+    let newestSource = { path: '', mtime: 0 }
+    for (const input of [resolve(root, 'src'), resolve(root, 'scripts/build-options.mjs')]) {
+      const candidate = await newestMtime(input)
+      if (candidate.mtime > newestSource.mtime) newestSource = candidate
+    }
+
+    for (const [artifact, label] of [
+      [HOST_BUNDLE, '宿主产物'],
+      [CLIENT_BUNDLE, '客户端产物'],
+    ] as const) {
+      assertBuilt(artifact, label)
+      const { mtimeMs } = await stat(artifact)
+      assert.ok(
+        mtimeMs >= newestSource.mtime,
+        `${label} 比源码旧，测试会对着过期产物报结论：\n` +
+          `  产物：${artifact}\n` +
+          `  更新的输入：${newestSource.path}\n` +
+          '  先运行：npm run build',
+      )
     }
   })
 })

@@ -1,6 +1,9 @@
 /**
  * 构建脚本。
  *
+ * 三个产物的 esbuild 选项统一放在 `scripts/build-options.mjs` —— 构建回归测试
+ * （`test/client-graph.test.ts`）必须用同一份选项，否则脚本改坏了测试也照样绿。
+ *
  * 产出三个目标：
  *
  * 1. `lib/index.js` —— 宿主半区，自包含 ESM。
@@ -39,83 +42,34 @@
  */
 
 import { build } from 'esbuild'
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { writeFile, mkdir } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  CLIENT_EXTERNALS,
+  PACKAGE_NAME,
+  clientBuildOptions,
+  hostBuildOptions,
+  wrapClientBundle,
+} from './build-options.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
-/** 包名：与 package.json 的 name 一致，也是 ModuleLoader 的注册 id。 */
-const PACKAGE_NAME = 'dsh-qiniu-usage'
-
-/** 浏览器冻结模块表里可用的外部模块。 */
-const CLIENT_EXTERNALS = ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client']
-
-/**
- * 套上 ModuleLoader 外壳。
- *
- * @param inner - esbuild 产出的 CJS 代码。
- * @returns 可直接被浏览器执行的 bundle 源码。
- */
-function wrapClientBundle(inner) {
-  // 内层产物自带 sourceMappingURL 注释，挪到最外层以免指向错位。
-  const withoutMap = inner.replace(/\n?\/\/# sourceMappingURL=.*(\n|$)/, '\n')
-  // esbuild 用两空格缩进，这里统一转成两制表符，保持产物可读且与参考产物风格一致。
-  const indented = withoutMap
-    .split('\n')
-    .map((line) => {
-      if (line.length === 0) return line
-      const match = /^( +)/.exec(line)
-      const levels = match === null ? 0 : Math.floor(match[1].length / 2)
-      const body = line.slice(match === null ? 0 : match[1].length)
-      return `\t\t${'\t'.repeat(levels)}${body}`
-    })
-    .join('\n')
-
-  return `window.__ModuleLoader__.load({
-\tid: ${JSON.stringify(PACKAGE_NAME)},
-\tfactory: (require) => {
-\t\tvar module = { exports: {} };
-\t\tvar exports = module.exports;
-\t\tObject.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
-${indented}\t\treturn module.exports;
-\t}
-});
-`
-}
-
 async function buildHost() {
-  await build({
-    entryPoints: [resolve(root, 'src/index.ts')],
-    outfile: resolve(root, 'lib/index.js'),
-    bundle: true,
-    format: 'esm',
-    platform: 'node',
-    target: 'node22',
-    sourcemap: true,
-    // 与参考产物一致：宿主半区自包含，无外部 require。
-    external: [],
-    logLevel: 'warning',
-  })
+  await build(hostBuildOptions(root))
   console.log('  ✓ lib/index.js          (host, esm, self-contained)')
 }
 
 async function buildClient() {
-  const result = await build({
-    entryPoints: [resolve(root, 'src/client/index.ts')],
-    bundle: true,
-    format: 'cjs',
-    platform: 'browser',
-    target: 'es2022',
-    jsx: 'automatic',
-    external: CLIENT_EXTERNALS,
-    sourcemap: false,
-    write: false,
-    logLevel: 'warning',
-  })
+  const result = await build(clientBuildOptions(root))
 
   const inner = result.outputFiles[0].text
   const wrapped = wrapClientBundle(inner)
+
+  // 先自检、后落盘。反过来的话，自检失败会留下一个**已经写坏**的
+  // lib/client.js —— 而 `test/bundle.test.ts` 读的正是磁盘上这个文件，
+  // 于是"构建失败"会污染成"测试失败"，让人查错方向。
+  verifyClientBundleSource(wrapped)
 
   await mkdir(resolve(root, 'lib'), { recursive: true })
   await writeFile(resolve(root, 'lib/client.js'), wrapped, 'utf8')
@@ -125,15 +79,23 @@ async function buildClient() {
 }
 
 /**
- * 构建后自检：客户端产物必须满足 ModuleLoader 契约。
+ * 落盘前自检：客户端产物必须满足 ModuleLoader 契约。
  *
  * 这几条断言是 M0 验收标准里"打通 lib/client.js 构建格式"的可执行版本 ——
  * 形态一旦漂移，构建就会失败而不是等到浏览器里才发现。
  *
+ * @param source - 套好 ModuleLoader 外壳、尚未落盘的产物源码。
  * @throws 当产物不满足契约时。
  */
-async function verifyClientBundle() {
-  const source = await readFile(resolve(root, 'lib/client.js'), 'utf8')
+function verifyClientBundleSource(source) {
+  // 产物里的每个 `require("…")` 都必须落在白名单内。
+  //
+  // 这条是踩坑后加的：`sumMonthRemain` 当初放在 `qiniu/respack.ts`，而那个模块
+  // 经由 `sign.ts` 依赖 `node:crypto`，浏览器产物直接从取值导入处炸掉。esbuild
+  // 的报错在宿主产物已经打印成功之后，容易被只看半截日志的人略过 —— 这里把
+  // "产物里不许出现白名单外的模块请求"变成构建期硬失败。
+  const requires = [...source.matchAll(/require\("([^"]+)"\)/g)].map((match) => match[1])
+  const outsiders = [...new Set(requires)].filter((name) => !CLIENT_EXTERNALS.includes(name))
 
   const checks = [
     ['以 window.__ModuleLoader__.load( 开头', source.startsWith('window.__ModuleLoader__.load(')],
@@ -143,12 +105,14 @@ async function verifyClientBundle() {
     ['定义 Symbol.toStringTag', source.includes('Symbol.toStringTag')],
     ['返回 module.exports', source.includes('return module.exports;')],
     ['react 走 require（未被打进 bundle）', source.includes('require("react")')],
+    ['产物内的外部模块请求都在白名单内', outsiders.length === 0],
   ]
 
   const failures = checks.filter(([, ok]) => !ok).map(([label]) => label)
   if (failures.length > 0) {
+    const detail = outsiders.length === 0 ? '' : `\n  白名单外的请求：${outsiders.join(', ')}`
     throw new Error(
-      `客户端 bundle 不符合 __ModuleLoader__ 契约：\n  - ${failures.join('\n  - ')}`,
+      `客户端 bundle 不符合 __ModuleLoader__ 契约：\n  - ${failures.join('\n  - ')}${detail}`,
     )
   }
 
@@ -165,7 +129,6 @@ async function main() {
   await mkdir(resolve(root, 'lib'), { recursive: true })
   await buildHost()
   await buildClient()
-  await verifyClientBundle()
   console.log('JS 产物构建完成。类型声明由 tsc -p tsconfig.build.json 产出。')
 }
 

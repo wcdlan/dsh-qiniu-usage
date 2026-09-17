@@ -27,7 +27,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react'
-import { sumMonthRemain } from '../qiniu/respack.ts'
+import { sumMonthRemain } from './respack-summary.ts'
 import {
   clampFabPosition,
   fabPopupPlacement,
