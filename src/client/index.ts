@@ -17,11 +17,11 @@ import type {
   SettingsScope,
   SettingsScopeSpec,
 } from '@deepseek-ai/dsh-client-ui-settings/client'
-import type { SlotComponent, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import type { SlotComponent } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type { Config } from '../config.ts'
 import { NS, en, zh } from './locales.ts'
-import { UsageSection, type UsageSectionFace } from './UsageSection.tsx'
+import { UsageSection, type UsageSectionFace, type UsageSectionProps } from './UsageSection.tsx'
 import { createUsageStore } from './usage-store.ts'
 
 /**
@@ -51,7 +51,7 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-/** 注入给面板的面的形状（与 {@link UsageSectionFace} 一致，这里再导出一次）。 */
+/** 面板的注入面与完整 props 形状（供外部按需引用）。 */
 export type { UsageSectionFace, UsageSectionProps } from './UsageSection.tsx'
 
 /**
@@ -99,16 +99,16 @@ export function apply(ctx: ClientContext): void {
   /**
    * 注入面工厂。
    *
-   * `t` 从当前 locale 绑定；每次注入时重新绑定，因此语言切换后面板文案会跟随。
+   * **不返回 `t`** —— 注册时声明了 `locale: NS`，框架会按 `PropsLocale` 注入
+   * `t: TranslateNS<NS>`。自己再给一个会与框架的注入冲突。
+   *
+   * 这些成员会被**摊平成组件 props**（`props.store` / `props.settings`），
+   * 不是一个 `face` 属性。
    */
-  const face = (): UsageSectionFace => {
-    const bound = ctx.locale.bind(NS) as unknown as TranslateNS<typeof NS>
-    return {
-      store,
-      ...(settingsScope === undefined ? {} : { settings: settingsScope }),
-      t: (key, params) => bound(key as Parameters<typeof bound>[0], params),
-    }
-  }
+  const face = (): UsageSectionFace => ({
+    store,
+    ...(settingsScope === undefined ? {} : { settings: settingsScope }),
+  })
 
   ctx.slots.inject('settings.section', () => {
     try {
@@ -121,7 +121,7 @@ export function apply(ctx: ClientContext): void {
           locale: NS,
           inject: face,
         },
-        UsageSection as SlotComponent<{ face?: UsageSectionFace }>,
+        UsageSection as SlotComponent<UsageSectionProps>,
       )
       return () => {
         unregister()

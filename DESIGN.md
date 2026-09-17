@@ -946,7 +946,45 @@ _getImpl(name, strict = true) {
 激活"的时序（先 apply，再 `ctx.provide('credentials', …)`，断言 `hasStore` 翻转且
 写入真的落到凭据库）。
 
-### 15.8 构建工具链：esbuild + 手写 ModuleLoader 外壳
+### 15.8 ⚠ 注入面是摊平成 props 的，`t` 由框架注入（第四个坑：面板空白）
+
+启动、路由、凭据都好了之后，界面里「七牛云用量」的分区标题出现了、菜单项也在，
+但**右侧面板是一片空白**。两个契约理解错误叠加：
+
+**一、`inject: face` 的返回值会被摊平成组件 props**，不是一个 `face` 属性。
+框架源码（`dsh-client-ui-renderer/lib/client.js`）：
+
+```js
+jsx(Comp, { ...kit, ...injected, ...slotInjected.props, ...ownerProps })
+```
+
+注释原文："One rendered entry: standard kit + cached entry inject + common slot inject
++ owner props (owner wins)"。所以 `props.store` / `props.settings` 才对，
+`props.face` 永远是 `undefined` —— 我那个 `face === undefined` 分支渲染出一个极小的
+`…`，在界面上就是"空白"。参考实现同款：`interface UsageSectionProps extends
+UsageSectionFace { close }` + `const { store } = props`。
+
+**二、`t` 由框架注入，不能自己塞。** 同一个文件：
+
+```js
+const kit = { ...standard }
+if (entry.locale !== void 0) kit["t"] = localeSeat(face, entry.locale)
+```
+
+只要注册时声明了 `locale: NS`，框架就把 `t: TranslateNS<NS>` 放进 kit。
+注入面里再返回一个 `t` 属于多余且会与框架的注入相互覆盖。参考实现的 face 里**故意没有 `t`**。
+
+**为什么 262 项测试全绿？** 因为**没有任何测试渲染过这个组件**。
+store、路由、归一、签名都测得很细，唯独"注入面 → props → 渲染"这条接线没有测试。
+现在补了 `test/client-render.test.ts`：用 `react-dom/server` 把面板渲染成 HTML，
+按**摊平的 props** 传入，断言用户能看见的文字（标题、模型名、合计、资源包名、利用率、
+三种状态），并用真实 `zh` 字典做 `t`（键缺失直接抛错，顺带抓漏翻译）。
+已反证：把 `props.face` 改回去，4 条测试立刻变红，第一条的失败信息正是"空白面板"。
+
+顺带修掉一个真实小毛病：首帧 `status === 'idle'` 时原本会闪一下"用量查询失败"
+（因为 `isInitialLoading` 只认 `'loading'`），现在改为 `data === null && status !== 'error'`。
+
+### 15.9 构建工具链：esbuild + 手写 ModuleLoader 外壳
 
 `tsdown` 的 output 形态无法直接产出 `window.__ModuleLoader__.load({...})`，
 且参考包**都没发布构建配置**。M0 的解法是用 esbuild（打成 CJS）+ 一个薄包装

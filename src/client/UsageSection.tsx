@@ -41,36 +41,30 @@ import {
 /** 翻译函数签名（与 locale 提供的形态兼容）。 */
 export type Translate = (key: string, params?: Record<string, unknown>) => string
 
-/** 注入给面板的面。 */
+/**
+ * 注册时由 `inject: face` 提供的注入面。
+ *
+ * ⚠ **注册返回的对象的成员会被摊平成组件 props**，不是一个 `face` 属性。
+ * 参考实现同款：`interface UsageSectionProps extends UsageSectionFace { close }`，
+ * 组件里直接 `const { store, settings } = props`。
+ *
+ * 注意这里**故意不含 `t`**：只要注册时声明了 `locale: NS`，框架就会按
+ * `PropsLocale<N>` 注入 `t: TranslateNS<N>`（见 dsh-client-ui-slots 的
+ * "framework-injected `t` seat, present exactly on entries whose registration
+ * declares `locale:`"）。自己在注入面里再塞一个 `t` 会与之冲突。
+ */
 export interface UsageSectionFace {
   store: UsageStoreView
   /** 设置作用域：读取 `pollIntervalSec` 等用户配置。 */
   settings?: SettingsScope<Config>
-  /** 翻译函数。 */
-  t: Translate
 }
 
-/** 组件属性。 */
-export interface UsageSectionProps {
-  face?: UsageSectionFace
-}
-
-/**
- * 用户配置的轮询间隔（秒）；非法/缺失时为 0（纯手动）。
- *
- * 注意 `SettingsScope` 没有 `get()` —— 读的是 `getSnapshot().value`，而且
- * `value` 在首次同步前是 `undefined`。
- */
-function pollIntervalMs(face: UsageSectionFace): number {
-  let seconds: unknown
-  try {
-    seconds = face.settings?.getSnapshot().value?.pollIntervalSec
-  } catch {
-    return 0
-  }
-  return typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0
-    ? Math.round(seconds * 1000)
-    : 0
+/** 组件属性 = 注入面 + 框架注入的 `t` + shell 提供的 `close`。 */
+export interface UsageSectionProps extends UsageSectionFace {
+  /** 框架按 `locale: NS` 注入的翻译函数。 */
+  t?: Translate
+  /** shell 提供的关闭回调（本面板不需要，仅为对齐契约）。 */
+  close?: () => void
 }
 
 /** 日期选择器的选项值。 */
@@ -79,19 +73,29 @@ const DAY_OPTIONS = ['today', 'yesterday'] as const
 /**
  * 用量分区主面板。
  *
- * @param props - 注入面。
+ * 注入面的成员是**摊平**传进来的（`props.store` / `props.settings`），
+ * `t` 由框架按 `locale:` 注入。
+ *
+ * @param props - 组件属性。
  * @returns 面板元素。
  */
-export function UsageSection({ face }: UsageSectionProps): ReactNode {
-  if (face === undefined) {
+export function UsageSection(props: UsageSectionProps): ReactNode {
+  const { store, settings } = props
+  // 翻译函数缺失时退化为"显示键名"而不是抛错 —— 面板绝不该因为一个文案而整块空白。
+  const t: Translate = props.t ?? ((key) => key)
+
+  if (store === undefined) {
     return createElement('div', { style: rootStyle }, createElement('div', { style: mutedStyle }, '…'))
   }
-  return createElement(UsageSectionInner, { face })
+  return createElement(UsageSectionInner, { store, settings, t })
 }
 
-/** 真正的面板主体；`face` 已保证存在。 */
-function UsageSectionInner({ face }: { face: UsageSectionFace }): ReactNode {
-  const { store, t } = face
+/** 真正的面板主体；`store` 已保证存在。 */
+function UsageSectionInner({ store, settings, t }: {
+  store: UsageStoreView
+  settings?: SettingsScope<Config>
+  t: Translate
+}): ReactNode {
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
 
   // 挂载周期 = 请求生命周期。卸载时 stop()，因此关掉设置页后零请求。
@@ -110,7 +114,9 @@ function UsageSectionInner({ face }: { face: UsageSectionFace }): ReactNode {
   const warnings = [...(usage?.warnings ?? []), ...(respack?.warnings ?? [])]
   const keys = keyOptions(state.keys, t('qiniu.account.all'))
 
-  const isInitialLoading = state.status === 'loading' && data === null
+  // 'idle' 是 effect 跑起来之前的那一帧；把它也算作加载中，否则首帧会闪出
+  // "用量查询失败" 的错误卡片（store 一 start 就会变成 loading）。
+  const isInitialLoading = data === null && state.status !== 'error'
   const showOnlyError = state.status === 'error' && data === null
 
   return createElement(
@@ -232,7 +238,7 @@ function UsageSectionInner({ face }: { face: UsageSectionFace }): ReactNode {
       : null,
 
     !isInitialLoading && !showOnlyError
-      ? createElement('div', { style: cardStyle }, renderRespackBlock(face, respack, warnings, t))
+      ? createElement('div', { style: cardStyle }, renderRespackBlock(store, respack, warnings, t))
       : null,
 
     // 凭据：键名只读 + 值输入框（两层语义，见 §10.2）
@@ -311,7 +317,7 @@ function renderUsageBlock(usage: UsageSnapshot | null, selectedKey: string, t: T
 
 /** 资源包块：空状态 / 利用率与逐包。 */
 function renderRespackBlock(
-  face: UsageSectionFace,
+  store: UsageStoreView,
   respack: Parameters<typeof RespackBars>[0]['snapshot'] | null,
   warnings: string[],
   t: Translate,
@@ -329,8 +335,8 @@ function renderRespackBlock(
     { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
     createElement(RespackBars, {
       snapshot: respack,
-      details: face.store.getSnapshot().details,
-      onLoadDetail: (orderHash: string, poId: number) => face.store.actions.loadDetail(orderHash, poId),
+      details: store.getSnapshot().details,
+      onLoadDetail: (orderHash: string, poId: number) => store.actions.loadDetail(orderHash, poId),
       t,
     }),
     warnings.length === 0
