@@ -249,6 +249,24 @@ describe('用量归一 · Key 标签与掩码', () => {
     assert.equal(maskApiKey('12345678'), '********')
   })
 
+  it('上游已经脱敏的 Key 不再二次打码（原样保留后 5 位）', () => {
+    // 实测上游格式就是 前5位*****后5位，再打一次码会把信息改少。
+    assert.equal(maskApiKey('sk-69*****03bf3'), 'sk-69*****03bf3')
+  })
+
+  it('实时接口的真实掩码 Key：标签取 name，掩码原样', () => {
+    const snapshot = normalizeUsage({
+      data: [{ api_key: 'sk-69*****03bf3', name: 'dsh', models: [] }],
+      auth: 'aksk',
+      query: QUERY,
+      day: '2026-01-01',
+      fallbackKeyLabel: '全部 Key',
+    })
+    assert.equal(snapshot.keyLabel, 'dsh')
+    assert.equal(snapshot.keyMasked, 'sk-69*****03bf3')
+    assert.equal(snapshot.unattributedKeys, undefined)
+  })
+
   it('extractUsageKeys 去重并掩码', () => {
     const keys = extractUsageKeys(akskTwoKeys)
     assert.equal(keys.length, 2)
@@ -256,8 +274,66 @@ describe('用量归一 · Key 标签与掩码', () => {
     assert.equal(keys[0]?.masked, 'abcde*****op')
   })
 
+  it('extractUsageKeys 跳过 "unknown" 占位分组（它不是一个可选的 Key）', () => {
+    const keys = extractUsageKeys([
+      { api_key: 'unknown', name: '', models: [] },
+      { api_key: 'sk-69*****03bf3', name: 'dsh', models: [] },
+    ])
+    assert.deepEqual(keys.map((k) => k.name), ['dsh'])
+  })
+
   it('Bearer 形态提取不到 Key（没有 api_key 分组）', () => {
     assert.deepEqual(extractUsageKeys(bearerFlatModels), [])
+  })
+})
+
+describe('用量归一 · 当天没有 Key 归属（上游返回 unknown 占位）', () => {
+  /** 当天响应：唯一分组是 `api_key:"unknown"` / `name:""`。 */
+  const UNATTRIBUTED = [{ api_key: 'unknown', name: '', models: bearerFlatModels }]
+
+  const snapshotOf = (keySelector?: string) =>
+    normalizeUsage({
+      data: UNATTRIBUTED,
+      auth: 'aksk',
+      query: QUERY,
+      day: '2026-01-01',
+      fallbackKeyLabel: '全部 Key',
+      ...(keySelector === undefined ? {} : { keySelector }),
+    })
+
+  it('标签回落到兜底值，不把 unknown 掩码成一串星号', () => {
+    const snapshot = snapshotOf()
+    assert.equal(snapshot.keyLabel, '全部 Key')
+    assert.equal(snapshot.keyMasked, '')
+    assert.equal(snapshot.apiKey, undefined, '哨兵值不该当成 Key 身份回传')
+    assert.equal(snapshot.unattributedKeys, true)
+  })
+
+  it('指定 Key 时保留账号汇总并标记无归属，而不是谎报零用量', () => {
+    const snapshot = snapshotOf('dsh')
+    assert.equal(snapshot.unattributedKeys, true)
+    assert.ok(snapshot.models.length > 0, '必须仍有数据；空面板会让人以为插件坏了')
+    assert.equal(snapshot.totals.total, snapshotOf().totals.total, '汇总口径与账号级一致')
+  })
+
+  it('"unknown" 本身不能作为筛选条件匹配到东西', () => {
+    const snapshot = snapshotOf('unknown')
+    assert.equal(snapshot.unattributedKeys, true)
+    // 匹配不上哨兵 → 走"无归属"分支，仍是账号汇总，而不是被 unknown 选中。
+    assert.equal(snapshot.totals.total, snapshotOf().totals.total)
+  })
+
+  it('有归属信息时，"匹配不到"仍然回落到空快照（零用量 Key 的边界不变）', () => {
+    const snapshot = normalizeUsage({
+      data: [{ api_key: 'sk-69*****03bf3', name: 'dsh', models: bearerFlatModels }],
+      auth: 'aksk',
+      query: QUERY,
+      day: '2026-01-01',
+      fallbackKeyLabel: '全部 Key',
+      keySelector: 'Halo',
+    })
+    assert.deepEqual(snapshot.models, [])
+    assert.equal(snapshot.unattributedKeys, undefined)
   })
 })
 

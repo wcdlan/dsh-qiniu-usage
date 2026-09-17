@@ -146,6 +146,12 @@ which is why the error classifier keys off the code text as well as the HTTP sta
 - **Today's data is delayed.** The upstream documents this; the panel pins a standing
   warning and shows the data watermark. Query *yesterday* or an explicit date for
   trustworthy totals.
+- **Per-key filtering is unavailable for today.** Measured against the real API: for
+  the current day the upstream has not attributed usage to individual keys yet and
+  returns a single `api_key: "unknown"` aggregate group. The key roster therefore comes
+  from a "last 30 days, up to yesterday" window (the dropdown still shows real key
+  names), and selecting a key while viewing today says plainly that the figures are
+  account-wide. Query *yesterday* or earlier for per-key detail.
 - **Lifetime vs month-to-date scope.** A pack's `used_amount` is lifetime cumulative
   while `month-overview`'s `month_used` is month-to-date; the panel labels both.
 - **Billing permission.** The finance API needs an AK with billing/IAM financial

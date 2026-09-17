@@ -142,6 +142,12 @@ export const PANEL_CSS = `
   transition: border-color .16s ease, background-color .16s ease;
 }
 .${cls.select}:hover { border-color: ${v('border-l3', 'rgba(128,128,128,.5)')}; }
+.${cls.select}:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+  border-color: ${v('border-l1', 'rgba(128,128,128,.22)')};
+}
+.${cls.select}:disabled:hover { border-color: ${v('border-l1', 'rgba(128,128,128,.22)')}; }
 .${cls.select}:focus-visible {
   outline: 2px solid ${v('brand-primary', '#4c8dff')};
   outline-offset: 1px;

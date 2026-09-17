@@ -12,7 +12,13 @@ import { CredentialAccess } from '../src/credentials.ts'
 import { resolveConfig } from '../src/config.ts'
 import { planUsageQuery, QiniuUsageService, toSourceError } from '../src/service.ts'
 import { QiniuUpstreamError } from '../src/qiniu/http.ts'
-import { akskKeyGroups, akskTwoKeys, bearerFlatModels } from './fixtures/usage.ts'
+import {
+  akskKeyGroups,
+  akskMaskedKeys,
+  akskTwoKeys,
+  akskUnattributed,
+  bearerFlatModels,
+} from './fixtures/usage.ts'
 import {
   monthOverviewPage,
   respackDetailMixedTypes,
@@ -25,7 +31,7 @@ const NOW_MS = Date.parse('2026-01-01T04:00:00Z')
 /** 造一个按 URL 分派的 fetch 替身：用量与资源包各自返回对应外壳。 */
 function makeFetchStub(
   data: unknown,
-  options: { status?: number; body?: unknown; respack?: 'ok' | 'forbidden' | 'fail' } = {},
+  options: { status?: number; body?: unknown; respack?: 'ok' | 'forbidden' | 'fail'; roster?: unknown } = {},
 ): { fetchImpl: typeof fetch; calls: URL[] } {
   const calls: URL[] = []
   const respackMode = options.respack ?? 'ok'
@@ -67,13 +73,25 @@ function makeFetchStub(
     }
 
     const status = options.status ?? 200
-    const payload = options.body ?? { status: true, data }
+    const payload = options.body ?? { status: true, data: isRosterCall(url) && options.roster !== undefined ? options.roster : data }
     return new Response(JSON.stringify(payload), {
       status,
       headers: { 'content-type': 'application/json' },
     })
   }) as typeof fetch
   return { fetchImpl, calls }
+}
+
+/**
+ * 这个请求是不是 Key 名册查询。
+ *
+ * 名册 = `day` 粒度 + **跨天**窗口（最近 30 天）；单日查询的 start/end 是同一天，
+ * 所以用"日期部分是否相同"就能稳定区分，不依赖具体是哪一天。
+ */
+function isRosterCall(url: URL): boolean {
+  const start = url.searchParams.get('start') ?? ''
+  const end = url.searchParams.get('end') ?? ''
+  return url.searchParams.get('granularity') === 'day' && start.slice(0, 10) !== end.slice(0, 10)
 }
 
 /** 只统计打向用量接口的请求；资源包请求共用同一个替身。 */
@@ -359,12 +377,65 @@ describe('服务 · /keys 候选集', () => {
     assert.deepEqual(payload.keys, [])
   })
 
-  it('与 overview 共用缓存，不重复打上游', async () => {
-    const { fetchImpl, calls } = makeFetchStub(akskKeyGroups)
+  it('与 overview 共用账号级查询的缓存，只额外多打一次名册窗口', async () => {
+    const { fetchImpl, calls } = makeFetchStub(akskKeyGroups, { roster: akskMaskedKeys })
     const service = makeService(fetchImpl)
     await service.overview('yesterday', '')
     await service.keys('yesterday')
-    assert.equal(usageCalls(calls).length, 1, '/keys 应复用账号级查询的缓存')
+
+    const urls = usageCalls(calls)
+    assert.equal(urls.length, 2, '账号级查询应复用缓存，名册窗口另算一次')
+    assert.equal(urls.filter(isRosterCall).length, 1, '名册窗口只打一次')
+  })
+
+  it('名册窗口是 day 粒度、截止昨天（当天数据不归属 Key）', async () => {
+    const { fetchImpl, calls } = makeFetchStub(akskKeyGroups, { roster: akskMaskedKeys })
+    await makeService(fetchImpl).keys('today')
+
+    const roster = usageCalls(calls).find(isRosterCall)
+    assert.ok(roster, '必须发一次名册窗口查询')
+    assert.equal(roster.searchParams.get('granularity'), 'day')
+    // NOW_MS = 2026-01-01，所以窗口是 2025-12-02 → 2025-12-31，不含今天。
+    assert.equal(roster.searchParams.get('start'), '2025-12-02T00:00:00+08:00')
+    assert.equal(roster.searchParams.get('end'), '2025-12-31T23:59:59+08:00')
+  })
+
+  it('当天上游不归属 Key 时：用历史名册给出真实 Key 名，且不谎报"无用量"', async () => {
+    // 当天响应只有一个 api_key:"unknown" 的分组，名册来自历史窗口。
+    const { fetchImpl } = makeFetchStub(akskUnattributed, { roster: akskMaskedKeys })
+    const payload = await makeService(fetchImpl).keys('today')
+
+    assert.deepEqual(
+      payload.keys.map((k) => k.label),
+      ['dsh', 'Halo'],
+      '下拉框里必须是真实 Key 名，而不是一串星号',
+    )
+    assert.deepEqual(payload.keys.map((k) => k.masked), ['sk-69*****03bf3', 'sk-15*****72ca6'])
+    for (const key of payload.keys) {
+      assert.equal(key.hasUsage, undefined, '当天没有归属信息 → 三态里的"不确定"，不能标无用量')
+    }
+  })
+
+  it('名册取不到时退回所选日期响应里的 Key，而不是空清单', async () => {
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = input instanceof URL ? input : new URL(String(input))
+      if (isRosterCall(url)) return new Response('boom', { status: 500 })
+      return new Response(JSON.stringify({ status: true, data: akskKeyGroups }), { status: 200 })
+    }) as typeof fetch
+
+    const payload = await makeService(fetchImpl).keys('yesterday')
+    assert.deepEqual(payload.keys.map((k) => k.label), ['我的测试Key'], '至少用当天的 Key 兜底')
+    assert.equal(payload.keys[0]?.hasUsage, true)
+  })
+
+  it('名册与所选日期都没有 Key 时才给空清单', async () => {
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = input instanceof URL ? input : new URL(String(input))
+      if (isRosterCall(url)) return new Response('boom', { status: 500 })
+      return new Response(JSON.stringify({ status: true, data: [] }), { status: 200 })
+    }) as typeof fetch
+
+    assert.deepEqual((await makeService(fetchImpl).keys('yesterday')).keys, [])
   })
 })
 

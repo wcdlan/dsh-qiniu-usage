@@ -27,8 +27,8 @@ import { zh } from '../src/client/locales.ts'
 import { createUsageStore } from '../src/client/usage-store.ts'
 import { CredentialAccess } from '../src/credentials.ts'
 import { resolveConfig } from '../src/config.ts'
-import { QiniuUsageService, type OverviewPayload } from '../src/service.ts'
-import { akskKeyGroups } from './fixtures/usage.ts'
+import { QiniuUsageService, type KeysPayload, type OverviewPayload } from '../src/service.ts'
+import { akskKeyGroups, akskUnattributed } from './fixtures/usage.ts'
 import { monthOverviewPage, respackListPage } from './fixtures/respack.ts'
 
 /** 字典查表实现，带 `{name}` 占位符替换；键缺失直接抛错。 */
@@ -49,9 +49,13 @@ function translate(key: string, params?: Record<string, unknown>): string {
  * 所以这里只用来让真实 `QiniuUsageService` 产出载荷，再由下面的
  * {@link makeClientFetch} 以宿主载荷形态回给 store。
  */
-function makeUpstreamFetch(options: { emptyUsage?: boolean } = {}): typeof fetch {
+function makeUpstreamFetch(options: { emptyUsage?: boolean; unattributedUsage?: boolean } = {}): typeof fetch {
   const json = (body: unknown, status = 200): Response =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+
+  const usageData = options.unattributedUsage === true
+    ? akskUnattributed
+    : (options.emptyUsage === true ? [] : akskKeyGroups)
 
   return (async (input: RequestInfo | URL) => {
     const url = input instanceof URL ? input : new URL(String(input), 'http://localhost')
@@ -59,7 +63,7 @@ function makeUpstreamFetch(options: { emptyUsage?: boolean } = {}): typeof fetch
       const data = url.pathname.endsWith('/month-overview') ? monthOverviewPage : respackListPage
       return json({ code: 0, message: 'Success', data })
     }
-    return json({ status: true, data: options.emptyUsage === true ? [] : akskKeyGroups })
+    return json({ status: true, data: usageData })
   }) as typeof fetch
 }
 
@@ -69,7 +73,7 @@ function makeUpstreamFetch(options: { emptyUsage?: boolean } = {}): typeof fetch
  * 刻意把资源包单位改成上游真实存在的 `kTokens`：默认 fixture 用的是 `GB`，
  * 那样就永远测不到"单位自带量级"的换算路径（会变成空断言）。
  */
-async function makePayload(options: { emptyUsage?: boolean } = {}): Promise<OverviewPayload> {
+async function makePayload(options: { emptyUsage?: boolean; unattributedUsage?: boolean } = {}): Promise<OverviewPayload> {
   const service = new QiniuUsageService({
     config: resolveConfig(),
     credentials: new CredentialAccess(
@@ -103,7 +107,12 @@ async function makePayload(options: { emptyUsage?: boolean } = {}): Promise<Over
  * @param options - 让 /overview 失败或返回空用量。
  * @returns 可直接注入 store 的 fetch。
  */
-function makeClientFetch(options: { failUsage?: boolean; emptyUsage?: boolean } = {}): typeof fetch {
+function makeClientFetch(options: {
+  failUsage?: boolean
+  emptyUsage?: boolean
+  unattributedUsage?: boolean
+  keys?: KeysPayload['keys']
+} = {}): typeof fetch {
   const json = (body: unknown, status = 200): Response =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 
@@ -119,7 +128,7 @@ function makeClientFetch(options: { failUsage?: boolean; emptyUsage?: boolean } 
     if (options.failUsage === true && (url.pathname.endsWith('/overview') || url.pathname.endsWith('/refresh'))) {
       return new Response('boom', { status: 500 })
     }
-    if (url.pathname.endsWith('/keys')) return json({ keys: [] })
+    if (url.pathname.endsWith('/keys')) return json({ keys: options.keys ?? [] })
     if (url.pathname.endsWith('/credentials')) {
       return json({
         ok: true,
@@ -147,18 +156,29 @@ function makeClientFetch(options: { failUsage?: boolean; emptyUsage?: boolean } 
 async function renderSection(options: {
   failUsage?: boolean
   emptyUsage?: boolean
+  unattributedUsage?: boolean
+  keys?: KeysPayload['keys']
+  /** 渲染前先选中的 Key（会触发一次按 Key 的重新取数）。 */
+  key?: string
   start?: boolean
   omitStore?: boolean
 } = {}): Promise<string> {
   const store = createUsageStore({ fetchImpl: makeClientFetch(options) })
   if (options.start !== false) {
     store.actions.start()
+    store.actions.loadKeys()
     // 等到出现终态（ready 或 error）。
-    const deadline = Date.now() + 2_000
-    while (Date.now() < deadline) {
+    await waitFor(() => {
       const status = store.getSnapshot().status
-      if (status === 'ready' || status === 'error') break
-      await new Promise((resolve) => setTimeout(resolve, 2))
+      return status === 'ready' || status === 'error'
+    })
+    // Key 清单是另一条异步支线，等它落地再渲染。
+    if ((options.keys ?? []).length > 0) {
+      await waitFor(() => store.getSnapshot().keys.length > 0)
+    }
+    if (options.key !== undefined) {
+      store.actions.setKey(options.key)
+      await waitFor(() => store.getSnapshot().status === 'ready')
     }
   }
 
@@ -168,6 +188,15 @@ async function renderSection(options: {
     : { store, t: translate }
 
   return renderToStaticMarkup(createElement(UsageSection, props))
+}
+
+/** 轮询等待某个条件成立（SSR 下 store 是异步驱动的）。 */
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 2_000
+  while (Date.now() < deadline) {
+    if (predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 2))
+  }
 }
 
 describe('面板渲染 · 注入面摊平成 props', () => {
@@ -247,6 +276,59 @@ describe('面板渲染 · 三态', () => {
   it('无数据渲染空状态而不是崩', async () => {
     const html = await renderSection({ emptyUsage: true })
     assert.ok(html.includes('当日没有用量记录'), `应渲染空状态，实际：${html.slice(0, 300)}`)
+  })
+})
+
+describe('面板渲染 · Key 选择器', () => {
+  /** 真实账号名册（设计文档 §15.10 实测）。 */
+  const REAL_KEYS: KeysPayload['keys'] = [
+    { label: 'dsh', masked: 'sk-69*****03bf3', apiKey: 'sk-69*****03bf3', hasUsage: undefined, hasToken: false },
+    { label: 'Halo', masked: 'sk-15*****72ca6', apiKey: 'sk-15*****72ca6', hasUsage: undefined, hasToken: false },
+  ]
+
+  it('下拉框里是真名，不是一串星号', async () => {
+    const html = await renderSection({ keys: REAL_KEYS })
+    assert.ok(html.includes('>dsh<'), `应渲染 Key 名 dsh，实际：${html.slice(0, 500)}`)
+    assert.ok(html.includes('>Halo<'), '应渲染 Key 名 Halo')
+    assert.ok(!html.includes('*******'), `不该出现星号占位选项，实际：${html.slice(0, 500)}`)
+  })
+
+  it('hasUsage=undefined 时不标"无用量"（当天没归属信息，标了就是撒谎）', async () => {
+    const html = await renderSection({ keys: REAL_KEYS })
+    assert.ok(!html.includes('无用量'), '三态里的"不确定"不应渲染成无用量')
+  })
+
+  it('hasUsage=false（真无用量）仍标出来', async () => {
+    const html = await renderSection({
+      keys: [{ label: 'Halo', masked: '', hasUsage: false, hasToken: false }],
+    })
+    assert.ok(html.includes('Halo（当日没有用量记录）'), `应标注无用量，实际：${html.slice(0, 500)}`)
+  })
+
+  it('没有任何可选 Key 时 Key 选择器置灰而不是消失（避免布局跳动）', async () => {
+    const html = await renderSection({ keys: [] })
+    assert.ok(html.includes('上游暂未返回 Key 名册'), '应给出置灰原因')
+    assert.ok(html.includes('disabled'), 'Key 选择器应禁用')
+    assert.ok(html.includes('全部 Key（汇总）'), '仍显示当前口径')
+    assert.ok(html.includes('日期'), '日期字段仍在')
+  })
+
+  it('选了具体 Key 但当天上游没归属时，明确说明下方是账号汇总', async () => {
+    const html = await renderSection({
+      keys: REAL_KEYS,
+      unattributedUsage: true,
+      key: 'dsh',
+    })
+    assert.ok(
+      html.includes('上游尚未把当天用量归属到「dsh」'),
+      `应渲染未归属提示条，实际：${html.slice(0, 600)}`,
+    )
+    assert.ok(html.includes('DeepSeek V4 Pro'), '仍要显示账号汇总数据，不能是空面板')
+  })
+
+  it('账号级视图（未选 Key）不显示未归属提示', async () => {
+    const html = await renderSection({ keys: REAL_KEYS, unattributedUsage: true })
+    assert.ok(!html.includes('上游尚未把当天用量归属到'), '账号级视图无需这条提示')
   })
 })
 

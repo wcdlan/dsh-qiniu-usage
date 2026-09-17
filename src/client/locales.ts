@@ -22,6 +22,7 @@ export const zh = {
   'qiniu.account': '账号',
   'qiniu.account.all': '全部 Key（汇总）',
   'qiniu.key': 'Key',
+  'qiniu.key.unavailable': '上游暂未返回 Key 名册，暂时只能看账号汇总',
   'qiniu.day': '日期',
   'qiniu.day.today': '今天',
   'qiniu.day.yesterday': '昨天',
@@ -108,6 +109,8 @@ export const zh = {
   'qiniu.empty.noRespack': '账号下没有资源包',
   'qiniu.empty.noUsageKey': '所选 Key 当日没有用量（零用量的 Key 上游不会返回）',
   'qiniu.warn.dataDelay': '当天数据可能有延迟',
+  'qiniu.warn.keyUnattributed':
+    '上游尚未把当天用量归属到「{key}」，下方是账号汇总；单 Key 明细要等归属完成后（通常次日）才有',
   'qiniu.warn.seeBelow': '存在告警，详见下方说明。',
   'qiniu.error.usage': '用量查询失败',
   'qiniu.error.respack': '资源包查询失败',
@@ -127,6 +130,7 @@ export const en: LocaleDictOf<typeof NS> = {
   'qiniu.account': 'Account',
   'qiniu.account.all': 'All keys (combined)',
   'qiniu.key': 'Key',
+  'qiniu.key.unavailable': 'Upstream returned no key roster yet, so only the account total is available',
   'qiniu.day': 'Date',
   'qiniu.day.today': 'Today',
   'qiniu.day.yesterday': 'Yesterday',
@@ -208,6 +212,8 @@ export const en: LocaleDictOf<typeof NS> = {
   'qiniu.empty.noRespack': 'This account has no resource packs',
   'qiniu.empty.noUsageKey': 'The selected key had no usage this day (upstream omits zero-usage keys)',
   'qiniu.warn.dataDelay': "Today's data may be delayed",
+  'qiniu.warn.keyUnattributed':
+    'Upstream has not attributed today\'s usage to "{key}" yet; the figures below are account-wide. Per-key detail appears once attribution lands (usually the next day)',
   'qiniu.warn.seeBelow': 'There are warnings; see the notes below.',
   'qiniu.error.usage': 'Usage query failed',
   'qiniu.error.respack': 'Resource-pack query failed',

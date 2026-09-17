@@ -53,8 +53,16 @@ export interface UsageSnapshot {
   keyLabel: string
   /** Key 的掩码形式；无可展示名时为空串。 */
   keyMasked: string
-  /** 该 Key 的原始 api_key（AK/SK 形态才有）。 */
+  /** 上游给出的 `api_key`（**已是脱敏形式**，AK/SK 形态才有）。 */
   apiKey?: string
+  /**
+   * `true` 表示本次响应**完全没有 Key 归属**：上游把用量放在唯一的
+   * `api_key: "unknown"` 分组里（当天数据尚未归属到具体 Key）。
+   *
+   * 此时按 Key 筛选不可用 —— UI 应明确提示"以下为账号汇总"，而不是把
+   * 名称渲染成一串星号、或谎报"该 Key 当日无用量"。
+   */
+  unattributedKeys?: true
   /** 归一后的日期 `YYYY-MM-DD`。 */
   day: string
   granularity: 'day' | 'hour'
@@ -92,6 +100,29 @@ export interface NormalizeUsageInput {
 
 /** 未识别的单位：按 1:1 计数，并提示用户核对数量级。 */
 const UNKNOWN_UNIT = 1
+
+/**
+ * 上游在"用量尚未归属到具体 Key"时给的占位 `api_key`。
+ *
+ * 实测（设计文档 §15.10）：查询**当天**时上游返回 `{"api_key":"unknown","name":""}`，
+ * 全部用量挤在一个分组里；历史日期才会给出 `{"api_key":"sk-69*****03bf3","name":"dsh"}`
+ * 这样的真实归属。所以 `unknown` 是**哨兵值而不是 Key**：拿它去打码只会得到
+ * 一串无意义的星号，拿它当筛选条件也永远匹配不到东西。
+ */
+const UNATTRIBUTED_API_KEY = 'unknown'
+
+/**
+ * 取出上游 `api_key` 里**可用的 Key 身份**。
+ *
+ * @param apiKey - 上游 `data[].api_key`。
+ * @returns 可用的 Key 身份（已去空白）；是占位值或空串时返回 `''`。
+ */
+export function keyIdentityOf(apiKey: unknown): string {
+  if (typeof apiKey !== 'string') return ''
+  const identity = apiKey.trim()
+  if (identity === '' || identity.toLowerCase() === UNATTRIBUTED_API_KEY) return ''
+  return identity
+}
 
 /**
  * 把上游的 `unit` 解析成"换算倍数 + 基础单位标签"。
@@ -260,7 +291,10 @@ function findKeyGroup(
   const needle = keySelector.trim().toLowerCase()
   if (needle === '') return undefined
   return groups.find((group) => {
-    const apiKey = typeof group.api_key === 'string' ? group.api_key : ''
+    // 无归属的分组（`api_key: "unknown"`）不参与匹配：否则掩码后的 "*******"
+    // 会变成一个能选中、却永远筛不到东西的幽灵选项。
+    const apiKey = keyIdentityOf(group.api_key)
+    if (apiKey === '') return false
     const name = typeof group.name === 'string' ? group.name : ''
     return apiKey === keySelector
       || apiKey.toLowerCase() === needle
@@ -284,11 +318,20 @@ export function normalizeUsage(input: NormalizeUsageInput): UsageSnapshot {
   const warnings = new Set<string>()
 
   let groups = toKeyGroups(data)
+  // 整份响应里是否存在可用的 Key 归属 —— 当天数据尚未归属时为 false。
+  const unattributedKeys = groups.length > 0
+    && groups.every((group) => keyIdentityOf(group.api_key) === '')
   if (keySelector !== undefined && keySelector.trim() !== '') {
     const matched = findKeyGroup(groups, keySelector)
-    // 选中的 Key 当日零用量时上游不会返回它 —— 这不是错误，回落到空快照，
-    // 由 UI 显示"无用量"而不是"找不到 Key"（设计文档 §7.1 的已知边界）。
-    groups = matched === undefined ? [] : [matched]
+    if (matched !== undefined) {
+      groups = [matched]
+    } else if (!unattributedKeys) {
+      // 真有归属、只是这个 Key 当日零用量：上游不会返回它 —— 这不是错误，
+      // 回落到空快照，由 UI 显示"无用量"（设计文档 §7.1 的已知边界）。
+      groups = []
+    }
+    // 否则：上游**没有给任何归属信息**（当天）。此时既筛不了、也不能谎报零用量
+    // —— 保留账号汇总，由 `unattributedKeys` 让 UI 明说"以下是汇总"。
   }
 
   const allTimes: string[] = []
@@ -296,9 +339,7 @@ export function normalizeUsage(input: NormalizeUsageInput): UsageSnapshot {
   const merged = new Map<string, { model: UsageModel; keys: Set<string> }>()
 
   for (const group of groups) {
-    const groupKey = typeof group.api_key === 'string' && group.api_key !== ''
-      ? group.api_key
-      : 'unknown'
+    const groupKey = keyIdentityOf(group.api_key) || 'unattributed'
     for (const model of group.models ?? []) {
       const normalized = normalizeModel(model, warnings)
       const existing = merged.get(normalized.id)
@@ -338,11 +379,15 @@ export function normalizeUsage(input: NormalizeUsageInput): UsageSnapshot {
   }
 
   // Key 标签：优先取上游给的 name，其次掩码，最后调用方给的兜底标签。
+  // 无归属的 `unknown` 分组在这里被 keyIdentityOf 归零，于是自然落到兜底标签
+  // （「全部 Key」）——而不是渲染成 "*******"。
   const first = groups[0]
-  const keyLabel = first?.name !== undefined && first.name !== ''
-    ? first.name
-    : (first?.api_key !== undefined && first.api_key !== '' ? maskApiKey(first.api_key) : fallbackKeyLabel)
-  const keyMasked = first?.api_key !== undefined && first.api_key !== '' ? maskApiKey(first.api_key) : ''
+  const firstIdentity = keyIdentityOf(first?.api_key)
+  const firstName = typeof first?.name === 'string' ? first.name.trim() : ''
+  const keyLabel = firstName !== ''
+    ? firstName
+    : (firstIdentity !== '' ? maskApiKey(firstIdentity) : fallbackKeyLabel)
+  const keyMasked = firstIdentity === '' ? '' : maskApiKey(firstIdentity)
 
   const watermark = allTimes.length === 0
     ? undefined
@@ -352,7 +397,8 @@ export function normalizeUsage(input: NormalizeUsageInput): UsageSnapshot {
     source: auth,
     keyLabel,
     keyMasked,
-    ...(first?.api_key === undefined || first.api_key === '' ? {} : { apiKey: first.api_key }),
+    ...(firstIdentity === '' ? {} : { apiKey: firstIdentity }),
+    ...(unattributedKeys ? { unattributedKeys: true as const } : {}),
     day,
     granularity: query.granularity,
     range: { start: query.start, end: query.end, timezone: query.timezone },
@@ -369,34 +415,43 @@ export function normalizeUsage(input: NormalizeUsageInput): UsageSnapshot {
  *
  * 设计文档 §11.3：日志与界面里的 Key 一律掩码。
  *
- * @param key - 原始 Key。
+ * **上游给的 `api_key` 本身就已经是脱敏值**（实测格式 `sk-69*****03bf3`，
+ * 即 `前5位*****后5位`）。对已含 `*` 的值再打一次码只会把上游的后 5 位削成
+ * 2 位、把可读信息越改越少，所以这里原样返回。
+ *
+ * @param key - 原始或已脱敏的 Key。
  * @returns 掩码后的 Key；过短时整体打码。
  */
 export function maskApiKey(key: string): string {
+  if (key.includes('*')) return key
   if (key.length <= 8) return '*'.repeat(key.length)
   return `${key.slice(0, 5)}*****${key.slice(-2)}`
 }
 
 /**
- * 从用量响应中提取 Key 清单（供 `/keys` 使用）。
+ * 从用量响应中提取 Key 清单（供 `/keys` 名册使用）。
  *
- * **已知边界**：当日零用量的 Key 不会出现在上游响应里，因此只能枚举"有用量"的
+ * **跳过无归属的分组**：`api_key: "unknown"` 是"当天尚未归属"的占位值，不是
+ * 一个可选的 Key（设计文档 §15.10）。
+ *
+ * **已知边界**：窗口内零用量的 Key 不会出现在上游响应里，因此只能枚举"有用量"的
  * Key —— 其余由用户在配置里登记名称。见设计文档 §7.1。
  *
  * @param data - 上游 `data` 字段。
- * @returns 每个出现过的 Key 的掩码与名称。
+ * @returns 每个出现过的 Key 的名称、掩码与身份。
  */
 export function extractUsageKeys(data: unknown): { apiKey: string; masked: string; name?: string }[] {
   if (!Array.isArray(data)) return []
   const seen = new Map<string, { apiKey: string; masked: string; name?: string }>()
   for (const entry of data as (RawModel | RawKeyGroup)[]) {
     if (!isKeyGroup(entry)) continue
-    const apiKey = entry.api_key
-    if (typeof apiKey !== 'string' || apiKey === '' || seen.has(apiKey)) continue
+    const apiKey = keyIdentityOf(entry.api_key)
+    if (apiKey === '' || seen.has(apiKey)) continue
+    const name = typeof entry.name === 'string' ? entry.name.trim() : ''
     seen.set(apiKey, {
       apiKey,
       masked: maskApiKey(apiKey),
-      ...(typeof entry.name === 'string' && entry.name !== '' ? { name: entry.name } : {}),
+      ...(name === '' ? {} : { name }),
     })
   }
   return [...seen.values()]

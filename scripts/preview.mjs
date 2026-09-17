@@ -14,6 +14,7 @@
  *   必须用参数而不是 `--window-size`：Chrome 会把窗口宽度夹到最小值（约 500px），
  *   若按更小的 window-size 出图，只会把右侧**裁掉**，看起来像布局溢出，实为假象。
  * - `?diag=1` —— 在页面顶部显示溢出诊断（哪个元素超出了面板宽度）。
+ * - `.tmp/preview-keyed.html` —— 选中单个 Key、当天上游未归属的提示态。
  *
  * @module dsh-qiniu-usage/scripts/preview
  */
@@ -180,6 +181,12 @@ async function main() {
   const panelHtml = await mod.renderPanel()
   await writeFile(htmlPath, wrapDocument(panelHtml), 'utf8')
   console.log(`预览已生成：${htmlPath}`)
+
+  // 变体：选了具体 Key、但当天上游未归属 → 提示条。用来看"账号汇总"文案的排版。
+  const keyedHtml = await mod.renderPanel({ key: 'dsh' })
+  const keyedPath = resolve(tmp, 'preview-keyed.html')
+  await writeFile(keyedPath, wrapDocument(keyedHtml), 'utf8')
+  console.log(`预览已生成：${keyedPath}`)
 
   const floatingHtml = await mod.renderFloating()
   await writeFile(floatingHtmlPath, wrapFloatingDocument(floatingHtml), 'utf8')

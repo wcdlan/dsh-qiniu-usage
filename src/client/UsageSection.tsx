@@ -134,6 +134,9 @@ function UsageSectionInner({ store, settings, t }: {
     createElement(
       'div',
       { className: cls.toolbar },
+      // Key 选择器：**始终渲染**，没有可选 Key 时置灰。
+      // 不隐藏的理由：名册是异步到的，隐藏会让工具条在加载完成时突然多出一个
+      // 控件（布局跳动）；置灰则位置稳定，并且诚实地说出"这个维度现在没得选"。
       createElement(
         'div',
         { className: cls.field },
@@ -144,15 +147,23 @@ function UsageSectionInner({ store, settings, t }: {
             className: cls.select,
             value: state.key,
             'aria-label': t('qiniu.key'),
+            disabled: state.keys.length === 0,
+            ...(state.keys.length === 0 ? { title: t('qiniu.key.unavailable') } : {}),
             onChange: (event: { target: { value: string } }) => store.actions.setKey(event.target.value),
           },
           ...keys.map((option) =>
             createElement(
               'option',
               { key: option.value, value: option.value },
-              option.hasUsage ? option.label : `${option.label}（${t('qiniu.empty.noUsage')}）`,
+              // 只有明确"当日有归属、但没有它"才标无用量；`undefined` = 上游
+              // 当天没有归属信息，标"无用量"是在说谎。
+              option.hasUsage === false ? `${option.label}（${t('qiniu.empty.noUsage')}）` : option.label,
             ),
           ),
+          // 已选中的 Key 不在候选里（名册取不到）时补一个选项，避免显示错乱。
+          state.key === '' || keys.some((option) => option.value === state.key)
+            ? null
+            : createElement('option', { key: state.key, value: state.key }, state.key),
         ),
       ),
       createElement(
@@ -209,6 +220,16 @@ function UsageSectionInner({ store, settings, t }: {
                 { className: cls.muted, style: { fontSize: '11.5px' } },
                 `上游水位 ${formatWatermark(usage.watermark)}`,
               ),
+        )
+      : null,
+
+    // 选了具体 Key、但这份数据没有 Key 归属：必须说清"下面是账号汇总"，
+    // 而不是默默显示账号总量（看着像筛选失效）或显示空面板（看着像坏了）。
+    state.key !== '' && usage?.unattributedKeys === true
+      ? createElement(
+          'div',
+          { className: `${cls.callout} ${cls.calloutWarn}`, role: 'status' },
+          createElement('strong', null, t('qiniu.warn.keyUnattributed', { key: state.key })),
         )
       : null,
 

@@ -52,7 +52,18 @@ export interface OverviewPayload {
 
 /** `/keys` 的载荷。 */
 export interface KeysPayload {
-  keys: { label: string; masked: string; apiKey?: string; hasUsage: boolean; hasToken: boolean }[]
+  /**
+   * 候选 Key。`hasUsage` 是三态：`true` 当日有、`false` 当日有归属但没它、
+   * `undefined` 当日上游没有归属信息（无法判断，UI 不标注）。
+   */
+  keys: { label: string; masked: string; apiKey?: string; hasUsage?: boolean; hasToken: boolean }[]
+}
+
+/** Key 名册的一条：上游窗口里出现过的 Key。 */
+interface KeyRosterEntry {
+  label: string
+  masked: string
+  apiKey: string
 }
 
 /** {@link QiniuUsageService} 的构造参数。 */
@@ -140,6 +151,39 @@ export function planUsageQuery(selector: DaySelector, nowMs: number): UsageQuery
   }
 }
 
+/** Key 名册的查询窗口（RFC3339 的 start/end 与缓存键）。 */
+export interface KeyRosterQueryPlan {
+  start: string
+  end: string
+  cacheKey: string
+}
+
+/** 名册窗口的天数：上游 `day` 粒度上限是 31 天，留一天余量。 */
+const ROSTER_WINDOW_DAYS = 30
+
+/**
+ * 把"现在"解析为 Key 名册的查询窗口：**最近 30 天、截止到昨天**。
+ *
+ * 为什么截止昨天：当天数据上游尚未归属到具体 Key（`api_key: "unknown"`），
+ * 把今天包进窗口只会多出一个无名分组。见设计文档 §15.10。
+ *
+ * @param nowMs - 当前时间戳。
+ * @returns 窗口与缓存键。
+ */
+export function planKeyRosterQuery(nowMs: number): KeyRosterQueryPlan {
+  const shifted = new Date(nowMs + 8 * 3600 * 1000)
+  const day = (offsetDays: number): string =>
+    new Date(shifted.getTime() + offsetDays * 24 * 3600 * 1000).toISOString().slice(0, 10)
+  const end = day(-1)
+  // 含昨天共 ROSTER_WINDOW_DAYS 天（`-ROSTER_WINDOW_DAYS` 到 `-1`）。
+  const start = day(-ROSTER_WINDOW_DAYS)
+  return {
+    start: `${start}T00:00:00${CST_OFFSET}`,
+    end: `${end}T23:59:59${CST_OFFSET}`,
+    cacheKey: `${start}:${end}`,
+  }
+}
+
 /** 把任意错误归一为可回传浏览器的 {@link SourceError}。 */
 export function toSourceError(error: unknown, source: 'usage' | 'respack'): SourceError {
   if (error instanceof MissingCredentialsError) {
@@ -184,6 +228,9 @@ export class QiniuUsageService {
   readonly #inflight = new SingleFlight<UsageFetchResult>()
   readonly #respackCache: TtlCache<RespackSnapshot>
   readonly #respackInflight = new SingleFlight<RespackSnapshot>()
+  /** Key 名册缓存：走"低频"TTL（与资源包同档），名册本身变化很慢。 */
+  readonly #rosterCache: TtlCache<KeyRosterEntry[]>
+  readonly #rosterInflight = new SingleFlight<KeyRosterEntry[]>()
   /** 上一次成功取到的逐包明细，供下钻补齐上游未返回的字段。 */
   #lastPacks: RespackPack[] = []
 
@@ -204,6 +251,7 @@ export class QiniuUsageService {
     const maxEntries = options.maxCacheEntries ?? 200
     this.#overviewCache = new TtlCache<UsageFetchResult>({ maxEntries, now: this.#now })
     this.#respackCache = new TtlCache<RespackSnapshot>({ maxEntries, now: this.#now })
+    this.#rosterCache = new TtlCache<KeyRosterEntry[]>({ maxEntries, now: this.#now })
   }
 
   /** 当前配置。 */
@@ -227,6 +275,7 @@ export class QiniuUsageService {
     this.#config = config
     this.#overviewCache.clear()
     this.#respackCache.clear()
+    this.#rosterCache.clear()
   }
 
   /**
@@ -263,12 +312,20 @@ export class QiniuUsageService {
   }
 
   /**
-   * 取 `/keys` 载荷。
+   * 取 `/keys` 载荷 —— Key 选择器的候选集合。
    *
-   * 与 `/overview` 共用同一次上游调用（同一个缓存与 single-flight 键）。
+   * **名册来自历史窗口，不是当天的响应**：实测（设计文档 §15.10）查当天时上游把
+   * 全部用量塞进唯一一个 `api_key: "unknown"`、`name: ""` 的分组，拿它做名册只能
+   * 得到一串星号。历史日期（含昨天的 `hour` 粒度）才会给出真实归属。
+   * 所以名册固定用「最近 30 天、截止昨天」的 `day` 粒度查询枚举。
    *
-   * @param day - 日期口径。
-   * @returns Key 清单；上游失败时返回空清单而不是抛错（UI 显示"无用量"即可）。
+   * `hasUsage` 是**三态**：
+   * - `true` —— 所选日期确实有这个 Key；
+   * - `false` —— 所选日期有归属信息、但没有它（当日零用量）；
+   * - `undefined` —— 所选日期**没有归属信息**（当天），无法判断，UI 不标"无用量"。
+   *
+   * @param day - 日期口径（只影响 `hasUsage` 判定，不影响名册）。
+   * @returns Key 清单；上游失败时返回空清单而不是抛错。
    */
   async keys(day: DaySelector): Promise<KeysPayload> {
     let result: UsageFetchResult
@@ -279,29 +336,94 @@ export class QiniuUsageService {
       return { keys: [] }
     }
 
-    const registered = this.#config.apiKeys.map((entry) => entry.label)
-
-    const keys: KeysPayload['keys'] = [
-      // 上游枚举到的 Key（当日有用量）。
-      ...result.keys.map((k) => ({
+    // 名册取不到（网络/权限）时退回"所选日期这份响应里的 Key" —— 至少当天的
+// 下拉框仍可用；两者都没有时才是空清单。
+    const roster = await this.#keyRoster().catch(() =>
+      result.keys.map((k) => ({
         label: k.name !== undefined && k.name !== '' ? k.name : k.masked,
         masked: k.masked,
         apiKey: k.apiKey,
-        hasUsage: true,
-        hasToken: this.#hasTokenFor(k.name, k.masked),
       })),
-      // 配置里登记但当日无用量、因而上游不返回的 Key。
-      ...registered
-        .filter((label) => !this.#hasUsageLabel(result.keys, label))
+    )
+    const unattributed = result.snapshot.unattributedKeys === true
+
+    /** 所选日期的响应里有没有这个 Key。 */
+    const usedOnDay = (entry: { label: string; masked: string }): boolean =>
+      result.keys.some((k) => (
+        (entry.masked !== '' && k.masked === entry.masked)
+        || (entry.label !== '' && k.name === entry.label)
+      ))
+
+    const keys: KeysPayload['keys'] = [
+      // 名册：上游窗口里出现过的 Key（带真实名称与掩码）。
+      ...roster.map((entry) => ({
+        label: entry.label,
+        masked: entry.masked,
+        apiKey: entry.apiKey,
+        hasUsage: unattributed ? undefined : usedOnDay(entry),
+        hasToken: this.#hasTokenFor(entry.label, entry.masked),
+      })),
+      // 配置里登记、但名册里没有的 Key（例如窗口内零用量）。
+      ...this.#config.apiKeys
+        .map((entry) => entry.label)
+        .filter((label) => !roster.some((entry) => entry.label === label))
         .map((label) => ({
           label,
           masked: '',
-          hasUsage: false,
+          hasUsage: unattributed ? undefined : false,
           hasToken: this.#config.apiKeys.some((entry) => entry.label === label && entry.tokenRef !== ''),
         })),
     ]
 
     return { keys }
+  }
+
+  /**
+   * 取 Key 名册：最近 30 天（**截止昨天**）按 `day` 粒度枚举上游出现过的 Key。
+   *
+   * 缓存走"低频"档（{@link ResolvedConfig.dashboardTtlSec}）：名册变化很慢，
+   * 而它与 `/overview` 的当天查询是完全不同的请求，不该互相顶掉缓存。
+   *
+   * @returns 名册条目（label 取上游 `name`，退化时用掩码）。
+   */
+  async #keyRoster(): Promise<KeyRosterEntry[]> {
+    const window = planKeyRosterQuery(this.#now())
+    const cached = this.#rosterCache.get(window.cacheKey)
+    if (cached !== undefined) return cached
+
+    return this.#rosterInflight.run(window.cacheKey, async () => {
+      const raced = this.#rosterCache.get(window.cacheKey)
+      if (raced !== undefined) return raced
+
+      const { accessKey, secretKey } = await this.#credentials.resolveKeyPair(
+        this.#config.accessKeyRef,
+        this.#config.secretKeyRef,
+      )
+      const { url, headers } = signQiniuRequest(accessKey, secretKey, {
+        method: 'GET',
+        baseUrl: this.#config.usageBaseUrl,
+        path: '/v3/stat/usage',
+        query: [
+          ['granularity', 'day'],
+          ['start', window.start],
+          ['end', window.end],
+          ['timezone', this.#config.timezone],
+        ],
+      })
+      const data = await this.#limiter.run(() =>
+        fetchUpstreamData({ url, method: 'GET', headers }, 'qnaigc', {
+          fetchImpl: this.#fetch,
+          sleepImpl: (ms) => this.#sleep(ms),
+        }),
+      )
+      const roster = extractUsageKeys(data).map((entry) => ({
+        label: entry.name !== undefined && entry.name !== '' ? entry.name : entry.masked,
+        masked: entry.masked,
+        apiKey: entry.apiKey,
+      }))
+      this.#rosterCache.set(window.cacheKey, roster, this.#config.dashboardTtlSec * 1000)
+      return roster
+    })
   }
 
   /**
@@ -314,6 +436,7 @@ export class QiniuUsageService {
   async refresh(day: DaySelector, key: KeySelector): Promise<OverviewPayload> {
     this.#overviewCache.clear()
     this.#respackCache.clear()
+    this.#rosterCache.clear()
     return this.overview(day, key)
   }
 
@@ -415,6 +538,7 @@ export class QiniuUsageService {
     // 旧数据可能用了失效的凭据 —— 清缓存以便下次拿到新值。
     this.#overviewCache.clear()
     this.#respackCache.clear()
+    this.#rosterCache.clear()
   }
 
   /**
@@ -428,6 +552,7 @@ export class QiniuUsageService {
     await this.#credentials.unset(ref)
     this.#overviewCache.clear()
     this.#respackCache.clear()
+    this.#rosterCache.clear()
   }
 
   /**
@@ -471,14 +596,6 @@ export class QiniuUsageService {
       const label = entry.label
       return label === name || label === masked
     })
-  }
-
-  /** 配置里登记的某个 label 是否已在本次用量响应中出现。 */
-  #hasUsageLabel(
-    keys: { apiKey: string; masked: string; name?: string }[],
-    label: string,
-  ): boolean {
-    return keys.some((k) => k.name === label || k.masked === label)
   }
 
   /**

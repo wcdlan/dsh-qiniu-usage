@@ -47,6 +47,9 @@
 
 1. AK/SK 是本插件的**必需**凭据，缺它则 G2 完全不可用。
 2. AK/SK 模式下用量接口返回**账号下全部 Key**（按 `api_key` 分组，带 `name` 与掩码），所以"指定 Key"天然实现为"拉全账号 + 本地筛选"，而不是为每个 Key 单独配置 token。
+   ⚠ **例外（实测，见 §15.10）**：查**当天**时上游尚未归属，只返回唯一一个
+   `api_key: "unknown"` / `name: ""` 的聚合分组。因此"指定 Key"只在历史日期可用，
+   当天只能看账号汇总。
 3. Bearer 模式是**可选的精度增强**（用户恰好持有某个 `sk-`/`tk-` 时，可精确查该 Key），不是主路径。
 
 ---
@@ -458,7 +461,7 @@ type OverviewPayload = {
 |---|---|---|---|
 | GET | `/api/dsh-qiniu-usage/overview?day=today\|yesterday\|YYYY-MM-DD&key=<label\|masked\|空>` | — | `OverviewPayload` |
 | POST | `/api/dsh-qiniu-usage/refresh` | body 同 overview 的 query | 失效缓存后重跑，返回新 `OverviewPayload` |
-| GET | `/api/dsh-qiniu-usage/keys?day=` | — | `{ keys: { label, masked, name?, hasUsage, hasToken }[] }` |
+| GET | `/api/dsh-qiniu-usage/keys?day=` | — | `{ keys: { label, masked, apiKey?, hasUsage?, hasToken }[] }`（`hasUsage` 三态，见 §7.1） |
 | GET | `/api/dsh-qiniu-usage/respack/detail?order_hash=&po_id=` | — | `{ ok, detail }` |
 | GET | `/api/dsh-qiniu-usage/credentials` | — | `{ accessKey, secretKey, apiKeys[] }`，每项仅 `{ configured, source, writable }` |
 | POST | `/api/dsh-qiniu-usage/credentials` | `{ ref, value? \| action: 'set'\|'unset' }` | 同 GET 的 describe 结果 |
@@ -467,12 +470,27 @@ type OverviewPayload = {
 
 Key 选择器的候选集合 = **并集**：
 
-1. 最近一次 AK/SK 用量响应中出现的 Key（有 `name` + 掩码，`hasUsage=true`）
-2. config 里用户登记的 `apiKeys[].label`（`hasUsage` 依当日响应判定，可能为 false）
+1. **名册**：一次「最近 30 天、**截止昨天**」的 `day` 粒度查询里出现过的 Key
+   （有 `name` + 掩码）。
+   ⚠ 名册**不能**复用当天那份响应：当天上游尚未归属，只会给出
+   `api_key: "unknown"` / `name: ""`（§15.10）。名册缓存走低频档（10 分钟）。
+2. config 里用户登记的 `apiKeys[].label`（名册里没有的才补，避免重名）
+
+`hasUsage` 是**三态**，不是布尔：
+
+| 值 | 含义 | UI |
+|---|---|---|
+| `true` | 所选日期确实有这个 Key | 正常显示 |
+| `false` | 所选日期有归属信息、但没有它 | 标「（当日没有用量记录）」 |
+| `undefined` | 所选日期**没有归属信息**（当天） | 不标注 —— 标了就是谎报 |
 
 每项标注 `hasToken`（是否配了 `sk-` token，可走 Bearer 精确查询）。
 
-**已知边界**：当日**零用量**的 Key 不会出现在上游响应里，无法自动枚举 → 由用户在配置里登记名称，UI 显示"无用量"而非"不存在"。
+**已知边界 1**：当日**零用量**的 Key 不会出现在上游响应里，无法自动枚举 → 由用户在配置里登记名称，UI 显示"无用量"而非"不存在"。
+
+**已知边界 2**：**当天无法按 Key 筛选**（上游未归属）。此时面板保留账号汇总，
+并在选了具体 Key 时显式提示"下方是账号汇总"（`unattributedKeys`），
+而不是显示空面板。
 
 ---
 
@@ -564,7 +582,7 @@ ctx.slots.register({
 
 ### 9.3 交互与状态
 
-- **Key 选择器**：数据来自 `/keys`；顶级选项"全部 Key（汇总）"。
+- **Key 选择器**：数据来自 `/keys`；顶级选项"全部 Key（汇总）"。名册为空时**置灰而不是隐藏**（避免异步名册到达时工具条跳动），并给出置灰原因。
 - **日期选择器**：今天 / 昨天 / 具体日期。
 - **刷新按钮**：走 `POST /refresh`，按钮进入 loading，完成后更新"12:04:31"。
 - **凭据表单**：表头只读展示键名（`QINIU_ACCESS_KEY` / `QINIU_SECRET_KEY`），下方才是值输入框（AK 明文、SK password）；提交后**立即清空输入框**，只显示 `已保存 · 来源：凭据库` 或 `来源：环境变量 QINIU_ACCESS_KEY · 只读`；AK/SK 各自带"清除"。详见 §10.2 的"ref 是键名，不是值"。
@@ -777,6 +795,7 @@ const Config = z.object({
 - [ ] 设置页出现「七牛云用量」分区，位置在「使用统计」之后
 - [ ] 能查今天（带延迟告警）、昨天、指定日期的各模型用量
 - [ ] 能按 Key 筛选，且"全部 Key 汇总"可用
+      （⚠ 当天上游不归属 Key：选择器仍列真实 Key 名，选中时提示"下方是账号汇总"）
 - [ ] 能看当月资源包利用率 + 逐包已用/总量/到期
 - [ ] AK/SK 可在 GUI 内填写、更新、清除，界面永不回显明文
 - [ ] 用量与资源包任一失败时另一部分仍可读，错误文案可定位
@@ -813,6 +832,7 @@ const Config = z.object({
 | 4 | AK 可能没有账单/财务权限 | G2 不可用 | 降级为"仅用量"模式 + 明确引导 |
 | 5 | 资源包 `used_amount`（生命周期）与 `month_used`（当月）口径不同 | 误读利用率 | 两处分别标注口径 |
 | 6 | 零用量 Key 无法从上游枚举 | 选择器不全 | 允许在配置里登记 Key 名称 |
+| 6b | ~~当天无法按 Key 筛选~~ **已确认并处理**：当天上游返回唯一的 `api_key:"unknown"` 聚合分组 | 按 Key 筛选在当天不可用 | 名册改从历史窗口取（§7.1）；`hasUsage` 三态；选 Key 时显式提示"账号汇总"（§15.10） |
 | 7 | 客户端 HMR 需要 DSH checkout 里跑 `pnpm run dev:web` | 开发体验 | 开发期用 watch 构建 + 手动刷新 |
 | 8 | `dsh.client.inject` 误填服务名（裸名）会被**静默忽略**，不报错 | 客户端依赖未按序加载 | 填包名或省略该字段；见 §4.2 |
 | 9 | 缺 `webUiSettings` 兼容 binder 时 `ctx.settingsScope` 可能不存在 | 客户端半区崩溃 | `ctx.get('webUiSettings') ?? ctx.settingsScope`；见 §4.2 |
@@ -1102,4 +1122,49 @@ store、路由、归一、签名都测得很细，唯独"注入面 → props →
 
 产物体积对照：本插件客户端 bundle **4.5 KB**（dsh-usage 为 374 KB）—— 面板只做
 表格与进度条，样式只用主题 token，这个量级是合理的。
+
+### 15.10 ⚠ 当天用量上游不归属 Key；`api_key: "unknown"` 是哨兵值（第五个真实坑）
+
+**现象**：Key 下拉框里只有一个 `*******` 选项（用户截图指出）。
+
+**排查**：先用 `?key=` 之类的猜测定不了案，直接抓上游原始响应才看清 —— 用真实
+AK/SK 打 `/v3/stat/usage`，把四种请求摆在一起对比：
+
+| 请求 | `api_key` | `name` |
+|---|---|---|
+| `hour` / **今天** | `"unknown"` | `""` |
+| `hour` / 昨天 | `"sk-69*****03bf3"` | `"dsh"` |
+| `day` / 昨天（RFC3339） | `"sk-69*****03bf3"` | `"dsh"` |
+| `day` / 近 30 天 | 4 个真实 Key + 1 个 `"unknown"` | 真实名称 |
+
+三件事同时被证伪：
+
+1. **不是粒度问题，是"当天"问题**。`hour` 粒度查昨天照样有归属，`day` 粒度查今天
+   照样是 `unknown`。当天数据上游**尚未归属**到具体 Key，先用一个聚合分组顶着。
+   官方文档 §"AK/SK 鉴权（RFC3339 时间）"写的是"每组带 `name`"，但没写当天例外。
+2. **`api_key: "unknown"` 是哨兵，不是 Key**。原实现直接把它丢进 `maskApiKey`：
+   长度 7 ≤ 8 → 整体打码 → `"*******"`。一个纯占位值被渲染成了一个"看起来像 Key"
+   的选项。同理它也绝不该参与筛选匹配（`findKeyGroup` 现在先过 `keyIdentityOf`）。
+3. **上游给的 `api_key` 本身已经脱敏**（格式 `前5位*****后5位`）。原实现又打了一次码，
+   把后 5 位削成 2 位（`sk-69*****f3`）——信息越改越少。`maskApiKey` 现在对含 `*`
+   的值原样返回。
+
+**修法**（三处，缺一不可）：
+
+- `keyIdentityOf(apiKey)` 统一判身份：空串与 `unknown` 都归零。`normalizeUsage`
+  在"整份响应都没有归属"时给出 `unattributedKeys: true`，并且**指定 Key 时保留账号
+  汇总**而不是回落到空快照 —— 空面板会被读成"插件坏了"，而真相是"上游还没归属"。
+- **名册改从历史窗口取**：`/keys` 不再复用当天的响应（那样只能得到星号），而是单独
+  发一次「最近 30 天、**截止昨天**」的 `day` 粒度查询（`planKeyRosterQuery`），
+  缓存走低频档。实测名册从 `["*******"]` 变成 `["dsh","Halo","Lobehub","cc"]`。
+- `hasUsage` 变**三态**：`true`/`false`/`undefined`（当天无归属 → 不确定）。
+  UI 只在 `=== false` 时标"无用量"；把不确定渲染成"无用量"同样是谎报。
+
+**教训**：这一次的错误**不是逻辑写错，而是把一个未验证的上游假设当成了事实**
+（§13.2 风险 #6 原本只担心"零用量的 Key 枚举不到"）。凡是"上游会给某个字段"的
+假设，**要么在真机上打印一次原始响应，要么在代码里显式处理它的缺失/占位形态**；
+`unknown`、`""`、`0` 这类值都可能是哨兵而不是数据。另外，测试当时全绿 ——
+因为 fixture 用的 `api_key` 是编的漂亮字符串，**没有任何 fixture 覆盖"当天"这个
+最常见的口径**。现在 `test/fixtures/usage.ts` 里有 `akskUnattributed` 与
+`akskMaskedKeys` 两份实测形态。
 

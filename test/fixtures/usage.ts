@@ -79,6 +79,34 @@ export const akskKeyGroups = [
   },
 ]
 
+/**
+ * **当天**的真实形态：上游尚未把用量归属到具体 Key。
+ *
+ * 实测自真实账号（设计文档 §15.10）：`api_key` 是占位值 `unknown`、`name` 为空串，
+ * 全部模型的用量挤在这一个分组里。历史日期才有真实归属。
+ */
+export const akskUnattributed = [
+  {
+    api_key: 'unknown',
+    name: '',
+    models: bearerFlatModels,
+  },
+]
+
+/** 实时接口真实返回的 Key 掩码格式：上游已脱敏为 `前5位*****后5位`。 */
+export const akskMaskedKeys = [
+  {
+    api_key: 'sk-69*****03bf3',
+    name: 'dsh',
+    models: bearerFlatModels,
+  },
+  {
+    api_key: 'sk-15*****72ca6',
+    name: 'Halo',
+    models: bearerFlatModels,
+  },
+]
+
 /** 形态 2 的第二组 Key：换一个 api_key，模型量更小。 */
 export const akskTwoKeys = [
   ...akskKeyGroups,

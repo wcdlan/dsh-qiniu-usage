@@ -376,14 +376,17 @@ export function errorFor(
 /**
  * Key 选择器的候选列表：始终包含"全部 Key"。
  *
- * @param keys - 上游与配置合并后的 Key 清单。
+ * `hasUsage` 原样透传上游的三态：`undefined` 表示所选日期上游没有 Key 归属
+ * 信息（当天数据尚未归属），此时**不能**标"无用量"——那是在说谎。
+ *
+ * @param keys - 上游名册与配置合并后的 Key 清单。
  * @param allLabel - "全部 Key"的显示文案。
  * @returns 选项数组。
  */
 export function keyOptions(
   keys: KeysPayload['keys'],
   allLabel: string,
-): { label: string; value: string; hasUsage: boolean }[] {
+): { label: string; value: string; hasUsage?: boolean }[] {
   return [
     { label: allLabel, value: '', hasUsage: true },
     ...keys.map((key) => ({ label: key.label, value: key.label, hasUsage: key.hasUsage })),

@@ -31,6 +31,8 @@ const USAGE: OverviewPayload['usage'] = {
   source: 'aksk',
   keyLabel: '全部 Key（汇总）',
   keyMasked: '',
+  // 当天上游尚未把用量归属到具体 Key（实测），面板据此显示账号汇总。
+  unattributedKeys: true,
   day: '2026-09-17',
   granularity: 'hour',
   range: {
@@ -169,6 +171,7 @@ const RESPACK: NonNullable<OverviewPayload['respack']> = {
 async function makeReadyStore(): Promise<ReturnType<typeof createUsageStore>> {
   const store = createUsageStore({ fetchImpl: makePreviewFetch() })
   store.actions.start()
+  store.actions.loadKeys()
   store.actions.loadCredentials()
   const deadline = Date.now() + 2_000
   while (Date.now() < deadline) {
@@ -179,8 +182,20 @@ async function makeReadyStore(): Promise<ReturnType<typeof createUsageStore>> {
   while (Date.now() < deadline && store.getSnapshot().credentials === null) {
     await new Promise((resolve) => setTimeout(resolve, 5))
   }
+  // Key 名册是另一条支线：真实面板的 effect 也会拉它，预览要对齐。
+  while (Date.now() < deadline && store.getSnapshot().keys.length === 0) {
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
   return store
 }
+
+/** 预览用的 Key 名册：取自真实账号（上游已脱敏）。 */
+const KEYS = [
+  { label: 'dsh', masked: 'sk-69*****03bf3', apiKey: 'sk-69*****03bf3', hasUsage: undefined, hasToken: false },
+  { label: 'Halo', masked: 'sk-15*****72ca6', apiKey: 'sk-15*****72ca6', hasUsage: false, hasToken: false },
+  { label: 'Lobehub', masked: 'sk-32*****67460', apiKey: 'sk-32*****67460', hasUsage: false, hasToken: false },
+  { label: 'cc', masked: 'sk-72*****3e981', apiKey: 'sk-72*****3e981', hasUsage: false, hasToken: false },
+]
 
 /** 凭据状态（真实场景：凭据库可用但未配置）。 */
 const CREDENTIALS = {
@@ -197,7 +212,7 @@ function makePreviewFetch(): typeof fetch {
     const body = url.pathname.endsWith('/credentials')
       ? { ok: true, credentials: CREDENTIALS }
       : url.pathname.endsWith('/keys')
-        ? { keys: [] }
+        ? { keys: KEYS }
         : makePayload()
     return new Response(JSON.stringify(body), {
       status: 200,
@@ -222,9 +237,10 @@ function makePayload(): OverviewPayload {
  *
  * 异步：先把 store 推到 ready（SSR 不跑 effect，必须显式驱动），再静态渲染。
  *
+ * @param options - `key` 用于预览"选了具体 Key、但当天上游未归属"的提示态。
  * @returns 面板的静态 HTML。
  */
-export async function renderPanel(): Promise<string> {
+export async function renderPanel(options: { key?: string } = {}): Promise<string> {
   const payload: OverviewPayload = {
     ok: true,
     usage: USAGE,
@@ -239,7 +255,7 @@ export async function renderPanel(): Promise<string> {
     const body = url.pathname.endsWith('/credentials')
       ? { ok: true, credentials: CREDENTIALS }
       : url.pathname.endsWith('/keys')
-        ? { keys: [] }
+        ? { keys: KEYS }
         : payload
     return new Response(JSON.stringify(body), {
       status: 200,
@@ -249,6 +265,14 @@ export async function renderPanel(): Promise<string> {
 
   void payload
   const store = await makeReadyStore()
+  if (options.key !== undefined && options.key !== '') {
+    store.actions.setKey(options.key)
+    // setKey 会重新取数；等快照带上未归属标记即可。
+    const deadline = Date.now() + 1_000
+    while (Date.now() < deadline && store.getSnapshot().data?.usage?.unattributedKeys !== true) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+  }
   return renderToStaticMarkup(createElement(UsageSection, { store, t }))
 }
 
