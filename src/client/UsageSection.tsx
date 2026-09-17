@@ -14,6 +14,7 @@ import { createElement, useEffect, useSyncExternalStore, type CSSProperties, typ
 import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { UsageSnapshot } from '../qiniu/usage.ts'
 import type { Config } from '../config.ts'
+import { CredentialsForm } from './CredentialsForm.tsx'
 import { ModelUsageTable } from './ModelUsageTable.tsx'
 import { RespackBars } from './RespackBars.tsx'
 import { keyOptions, type UsageStoreView } from './usage-store.ts'
@@ -97,6 +98,7 @@ function UsageSectionInner({ face }: { face: UsageSectionFace }): ReactNode {
   useEffect(() => {
     store.actions.start()
     store.actions.loadKeys()
+    store.actions.loadCredentials()
     return () => {
       store.actions.stop()
     }
@@ -231,6 +233,20 @@ function UsageSectionInner({ face }: { face: UsageSectionFace }): ReactNode {
 
     !isInitialLoading && !showOnlyError
       ? createElement('div', { style: cardStyle }, renderRespackBlock(face, respack, warnings, t))
+      : null,
+
+    // 凭据：键名只读 + 值输入框（两层语义，见 §10.2）
+    !isInitialLoading && !showOnlyError
+      ? createElement(
+          'div',
+          { style: cardStyle },
+          createElement(CredentialsForm, {
+            credentials: state.credentials,
+            t,
+            onSet: (ref: string, value: string) => store.actions.setCredential(ref, value),
+            onUnset: (ref: string) => store.actions.unsetCredential(ref),
+          }),
+        )
       : null,
 
     // 分源错误

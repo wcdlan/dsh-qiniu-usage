@@ -498,3 +498,144 @@ describe('服务 · 资源包接入与失败隔离', () => {
     assert.equal(detail.unit, 'GB')
   })
 })
+
+describe('服务 · 凭据读写', () => {
+  /** 造一个带内存凭据库的服务，便于断言写入。 */
+  function makeCredentialService(options: {
+    writable?: boolean
+    source?: string
+    configured?: boolean
+  } = {}): {
+    service: QiniuUsageService
+    store: { values: Record<string, string>; sets: string[]; unsets: string[] }
+  } {
+    const store = { values: {} as Record<string, string>, sets: [] as string[], unsets: [] as string[] }
+    const writable = options.writable ?? true
+    const configured = options.configured ?? true
+
+    const service = new QiniuUsageService({
+      config: resolveConfig({ apiKeys: [{ label: 'K', tokenRef: 'QINIU_TOKEN_K' }] }),
+      credentials: new CredentialAccess(
+        {
+          resolve: async (ref: string) =>
+            configured ? { value: store.values[ref] ?? `value-of-${ref}`, source: options.source ?? 'file' } : undefined,
+          describe: async (ref: string) => ({
+            configured,
+            ...(configured ? { source: options.source ?? 'file' } : {}),
+            writable,
+          }),
+          set: async (ref: string, value: string) => {
+            if (!writable) throw new Error('来源只读，无法写入')
+            store.sets.push(ref)
+            store.values[ref] = value
+          },
+          unset: async (ref: string) => {
+            if (!writable) throw new Error('来源只读，无法清除')
+            store.unsets.push(ref)
+            delete store.values[ref]
+          },
+        },
+        {},
+      ),
+      fetchImpl: makeFetchStub(akskKeyGroups).fetchImpl,
+      now: () => NOW_MS,
+      sleep: async () => {},
+      minRequestIntervalMs: 0,
+    })
+    return { service, store }
+  }
+
+  it('describeCredentials 只回状态，不含任何值', async () => {
+    const { service } = makeCredentialService({ source: 'env' })
+    const view = await service.describeCredentials()
+
+    assert.equal(view.accessKey.ref, 'QINIU_ACCESS_KEY')
+    assert.equal(view.secretKey.ref, 'QINIU_SECRET_KEY')
+    assert.equal(view.hasStore, true)
+    assert.equal(view.apiKeys.length, 1)
+    assert.equal(view.apiKeys[0]?.ref, 'QINIU_TOKEN_K')
+
+    const serialized = JSON.stringify(view)
+    assert.ok(!serialized.includes('"value"'), '不得含 value 字段')
+    assert.ok(!serialized.includes('value-of-'), '不得含任何凭据值')
+  })
+
+  it('无凭据库时 hasStore=false 且 writable=false', async () => {
+    const service = new QiniuUsageService({
+      config: resolveConfig(),
+      credentials: new CredentialAccess(undefined, { QINIU_ACCESS_KEY: 'AK', QINIU_SECRET_KEY: 'SK' }),
+      fetchImpl: makeFetchStub(akskKeyGroups).fetchImpl,
+      now: () => NOW_MS,
+      sleep: async () => {},
+      minRequestIntervalMs: 0,
+    })
+    const view = await service.describeCredentials()
+    assert.equal(view.hasStore, false)
+    assert.equal(view.accessKey.writable, false)
+    assert.equal(view.accessKey.configured, true)
+    assert.equal(view.accessKey.source, 'env')
+  })
+
+  it('setCredential 拒绝白名单外的引用（不能写任意路径）', async () => {
+    const { service, store } = makeCredentialService()
+    for (const ref of ['/etc/passwd', 'OTHER_VAR', 'QINIU_ACCESS_KEY ']) {
+      await assert.rejects(() => service.setCredential(ref, 'x'), /未声明/)
+    }
+    assert.deepEqual(store.sets, [])
+  })
+
+  it('setCredential 拒绝空值（清除要走 unset）', async () => {
+    const { service, store } = makeCredentialService()
+    await assert.rejects(() => service.setCredential('QINIU_ACCESS_KEY', ''), /不能为空/)
+    assert.deepEqual(store.sets, [])
+  })
+
+  it('setCredential 写到白名单内的引用', async () => {
+    const { service, store } = makeCredentialService()
+    await service.setCredential('QINIU_ACCESS_KEY', 'NEW_AK')
+    await service.setCredential('QINIU_TOKEN_K', 'sk-xyz')
+    assert.deepEqual(store.sets, ['QINIU_ACCESS_KEY', 'QINIU_TOKEN_K'])
+    assert.equal(store.values.QINIU_ACCESS_KEY, 'NEW_AK')
+  })
+
+  it('只读来源的写入失败会向上抛出（由路由转成 ok=false）', async () => {
+    const { service } = makeCredentialService({ writable: false })
+    await assert.rejects(() => service.setCredential('QINIU_ACCESS_KEY', 'x'), /只读/)
+  })
+
+  it('unsetCredential 同样受白名单约束', async () => {
+    const { service, store } = makeCredentialService()
+    await assert.rejects(() => service.unsetCredential('/etc/passwd'), /未声明/)
+    await service.unsetCredential('QINIU_SECRET_KEY')
+    assert.deepEqual(store.unsets, ['QINIU_SECRET_KEY'])
+  })
+
+  it('写入凭据后响应缓存被清空（下次取数用新凭据）', async () => {
+    const { fetchImpl, calls } = makeFetchStub(akskKeyGroups)
+    const store = { sets: [] as string[] }
+    const service = new QiniuUsageService({
+      config: resolveConfig(),
+      credentials: new CredentialAccess(
+        {
+          resolve: async (ref: string) => ({ value: `v-${ref}`, source: 'file' }),
+          describe: async () => ({ configured: true, source: 'file', writable: true }),
+          set: async (ref: string) => {
+            store.sets.push(ref)
+          },
+          unset: async () => {},
+        },
+        {},
+      ),
+      fetchImpl,
+      now: () => NOW_MS,
+      sleep: async () => {},
+      minRequestIntervalMs: 0,
+    })
+
+    await service.overview('yesterday', '')
+    assert.equal(usageCalls(calls).length, 1)
+    await service.setCredential('QINIU_ACCESS_KEY', 'NEW')
+    await service.overview('yesterday', '')
+    assert.equal(usageCalls(calls).length, 2, '拿新凭据必须重新取数')
+  })
+})

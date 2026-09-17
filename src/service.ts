@@ -13,7 +13,7 @@
  */
 
 import { RateLimiter, SingleFlight, TtlCache } from './core/cache.ts'
-import type { CredentialAccess } from './credentials.ts'
+import type { CredentialAccess, CredentialStatus } from './credentials.ts'
 import { MissingCredentialsError } from './credentials.ts'
 import { QiniuUpstreamError, fetchUpstreamData } from './qiniu/http.ts'
 import { signQiniuRequest } from './qiniu/sign.ts'
@@ -356,6 +356,95 @@ export class QiniuUsageService {
     )
     const client = await this.#respackClient()
     return client.detail(orderHash, poId, pack)
+  }
+
+  /**
+   * 凭据访问器，供凭据路由使用。
+   *
+   * 暴露它是为了把"引用名白名单"与 describe/set/unset 的调用点收在一处
+   * （见 `routes.ts` 的凭据路由）。
+   */
+  get credentials(): CredentialAccess {
+    return this.#credentials
+  }
+
+  /**
+   * 查询配置里声明的凭据引用状态（**永不返回值**）。
+   *
+   * @returns AccessKey / SecretKey / 各 token 引用的 describe 结果。
+   */
+  async describeCredentials(): Promise<{
+    accessKey: { ref: string } & CredentialStatus
+    secretKey: { ref: string } & CredentialStatus
+    apiKeys: { label: string; ref: string; status: CredentialStatus }[]
+    /** 是否由 DSH 凭据库支撑；`false` 表示降级为环境变量只读。 */
+    hasStore: boolean
+  }> {
+    const accessKeyRef = this.#config.accessKeyRef
+    const secretKeyRef = this.#config.secretKeyRef
+
+    const [accessKeyStatus, secretKeyStatus, ...tokenStatuses] = await Promise.all([
+      this.#credentials.describe(accessKeyRef),
+      this.#credentials.describe(secretKeyRef),
+      ...this.#config.apiKeys.map((entry) => this.#credentials.describe(entry.tokenRef)),
+    ])
+
+    return {
+      accessKey: { ref: accessKeyRef, ...accessKeyStatus },
+      secretKey: { ref: secretKeyRef, ...secretKeyStatus },
+      apiKeys: this.#config.apiKeys.map((entry, index) => ({
+        label: entry.label,
+        ref: entry.tokenRef,
+        status: tokenStatuses[index] ?? { configured: false, writable: false },
+      })),
+      hasStore: this.#credentials.hasStore,
+    }
+  }
+
+  /**
+   * 写入一个凭据引用。
+   *
+   * @param ref - 引用名；必须在本插件声明的白名单内。
+   * @param value - 非空值。
+   * @throws {Error} 引用不在白名单内，或来源只读遮蔽。
+   */
+  async setCredential(ref: string, value: string): Promise<void> {
+    this.#assertKnownRef(ref)
+    if (value === '') throw new Error('凭据值不能为空（要清除请用清除操作）')
+    await this.#credentials.set(ref, value)
+    // 旧数据可能用了失效的凭据 —— 清缓存以便下次拿到新值。
+    this.#overviewCache.clear()
+    this.#respackCache.clear()
+  }
+
+  /**
+   * 清除一个凭据引用。
+   *
+   * @param ref - 引用名；必须在本插件声明的白名单内。
+   * @throws {Error} 引用不在白名单内，或来源只读遮蔽。
+   */
+  async unsetCredential(ref: string): Promise<void> {
+    this.#assertKnownRef(ref)
+    await this.#credentials.unset(ref)
+    this.#overviewCache.clear()
+    this.#respackCache.clear()
+  }
+
+  /**
+   * 引用名白名单校验（设计文档 §11.6：只允许写 config 声明的 ref）。
+   *
+   * @param ref - 待校验的引用名。
+   * @throws {Error} 不在白名单内。
+   */
+  #assertKnownRef(ref: string): void {
+    const allowed = new Set<string>([
+      this.#config.accessKeyRef,
+      this.#config.secretKeyRef,
+      ...this.#config.apiKeys.map((entry) => entry.tokenRef),
+    ])
+    if (!allowed.has(ref)) {
+      throw new Error(`不允许写入未声明的凭据引用：${ref}`)
+    }
   }
 
   /** 按当前凭据构造财务 API 客户端（每次调用重新解析凭据）。 */

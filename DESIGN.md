@@ -728,17 +728,18 @@ const Config = z.object({
 - [x] 分页触顶（>5 页）时给出告警而不是静默截断
 
 **宿主**
-- [x] 路由全部 loopback-fenced
+- [x] 路由全部 loopback-fenced（含凭据路由）
 - [x] 缓存键含 day/key/granularity
 - [x] single-flight 合并并发
 - [x] 全局上游限速 ≥250ms
 - [x] 用量与资源包失败隔离
 - [x] 卸载时 dispose 路由与定时器
+- [x] 凭据引用白名单校验（不能写任意路径）
 
 **客户端**
 - [x] `settings.section` order 152
 - [x] 轮询挂载周期，关页零请求
-- [ ] 凭据表单提交后清空、只回显 describe（M4）
+- [x] 凭据表单提交后清空、只回显 describe
 - [x] 空/错/加载三态齐备
 - [x] 只用主题 token 配色
 - [x] 刷新时保留旧数据 + 顶部细进度条（不闪空）

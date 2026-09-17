@@ -74,6 +74,26 @@ export const zh = {
   'qiniu.respack.detail.combo': '融合资源包',
   'qiniu.respack.scopeHint': '「已用」为资源包生命周期累计；当月口径见上方利用率。',
 
+  // 凭据
+  'qiniu.credentials.heading': '凭据',
+  'qiniu.credentials.hint': '填的是凭据的**值**；左侧灰字是该值存放的环境变量**名**。',
+  'qiniu.credentials.accessKey': 'AccessKey',
+  'qiniu.credentials.secretKey': 'SecretKey',
+  'qiniu.credentials.accessKeyPlaceholder': '粘贴 AccessKey 值',
+  'qiniu.credentials.secretKeyPlaceholder': '粘贴 SecretKey 值（不会回显）',
+  'qiniu.credentials.save': '保存',
+  'qiniu.credentials.clear': '清除',
+  'qiniu.credentials.configured': '已配置',
+  'qiniu.credentials.notConfigured': '未配置',
+  'qiniu.credentials.sourceEnv': '来源：环境变量 {ref}',
+  'qiniu.credentials.sourceStore': '已保存 · 来源：凭据库',
+  'qiniu.credentials.writable': '可写',
+  'qiniu.credentials.readOnly': '只读',
+  'qiniu.credentials.noStore': '无凭据库',
+  'qiniu.credentials.noStoreHint':
+    '宿主侧没有可用的凭据库，插件降级为环境变量直读；请在环境变量里设置下方两个名字，界面无法写入。',
+  'qiniu.credentials.unavailable': '暂时读不到凭据状态。',
+
   // 状态
   'qiniu.empty.noUsage': '当日没有用量记录',
   'qiniu.empty.noRespack': '账号下没有资源包',
@@ -147,6 +167,25 @@ export const en: LocaleDictOf<typeof NS> = {
   'qiniu.respack.detail.deductStatus': 'Posting status',
   'qiniu.respack.detail.combo': 'Combined pack',
   'qiniu.respack.scopeHint': '"Used" is the pack lifetime total; the month-to-date view is the utilisation above.',
+
+  'qiniu.credentials.heading': 'Credentials',
+  'qiniu.credentials.hint': 'Enter the credential **value**; the grey name at left is the environment-variable **name** it is stored under.',
+  'qiniu.credentials.accessKey': 'AccessKey',
+  'qiniu.credentials.secretKey': 'SecretKey',
+  'qiniu.credentials.accessKeyPlaceholder': 'Paste the AccessKey value',
+  'qiniu.credentials.secretKeyPlaceholder': 'Paste the SecretKey value (never echoed back)',
+  'qiniu.credentials.save': 'Save',
+  'qiniu.credentials.clear': 'Clear',
+  'qiniu.credentials.configured': 'Configured',
+  'qiniu.credentials.notConfigured': 'Not configured',
+  'qiniu.credentials.sourceEnv': 'Source: environment variable {ref}',
+  'qiniu.credentials.sourceStore': 'Saved · source: credential store',
+  'qiniu.credentials.writable': 'Writable',
+  'qiniu.credentials.readOnly': 'Read-only',
+  'qiniu.credentials.noStore': 'No credential store',
+  'qiniu.credentials.noStoreHint':
+    'The host has no credential store available, so the plugin falls back to reading environment variables. Set the two names below in the environment; the UI cannot write them.',
+  'qiniu.credentials.unavailable': 'Credential status is unavailable right now.',
 
   'qiniu.empty.noUsage': 'No usage recorded for this day',
   'qiniu.empty.noRespack': 'This account has no resource packs',

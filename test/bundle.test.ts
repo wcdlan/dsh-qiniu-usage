@@ -146,13 +146,36 @@ describe('产物 · 客户端半区 lib/client.js', () => {
     )
   })
 
-  it('源码里不包含任何凭据读取路径（安全底线）', async () => {
+  it('不包含任何凭据来源读取路径（安全底线）', async () => {
     const source = await readFile(CLIENT_BUNDLE, 'utf8')
-    for (const forbidden of ['process.env', 'QINIU_ACCESS_KEY', 'QINIU_SECRET_KEY', 'secretKey']) {
+    // 客户端 bundle 里不得有任何"自己去取凭据"的路径：
+    // - 环境变量直读（那是宿主半区的事）
+    // - 硬编码的引用名（引用名一律由宿主 describe 回传，客户端不预置）
+    for (const forbidden of ['process.env', 'QINIU_ACCESS_KEY', 'QINIU_SECRET_KEY']) {
       assert.ok(
         !source.includes(forbidden),
         `客户端 bundle 不应出现 "${forbidden}" —— 浏览器永不接触凭据`,
       )
+    }
+    // `secretKey` 作为 describe 结果的属性名是合法的（表单要显示它的状态），
+    // 但绝不能出现"把它的值取出来"的读法。
+    for (const forbidden of ['secretKey.value', 'secretKey?.value']) {
+      assert.ok(!source.includes(forbidden), `客户端不应读取 ${forbidden}`)
+    }
+  })
+
+  it('客户端只访问本插件的既定路由，其中凭据路由仅用 describe 形状', async () => {
+    const source = await readFile(CLIENT_BUNDLE, 'utf8')
+    // 允许的路由（前缀常量 + 各路径片段）。
+    for (const allowed of ['/overview', '/refresh', '/keys', '/credentials', '/respack/detail']) {
+      assert.ok(source.includes(allowed), `客户端应当访问 ${allowed}`)
+    }
+    // 客户端确实会发送被写入的值（这是它必须做的），但**不得**出现任何把
+    // "字段名 + 值"读到本地并渲染的路径。用正则可读的形式钉住这一点：
+    // `accessKey` / `secretKey` 只应作为 describe 结果的对象属性出现在类型位置，
+    // 不应作为读取源（例如 `.accessKey.value`）。
+    for (const forbidden of ['accessKey.value', 'secretKey.value', 'accessKey?.value', 'secretKey?.value']) {
+      assert.ok(!source.includes(forbidden), `客户端不应读取 ${forbidden}`)
     }
   })
 })

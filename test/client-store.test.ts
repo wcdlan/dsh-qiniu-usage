@@ -53,22 +53,48 @@ function okPayload(overrides: Partial<OverviewPayload> = {}): OverviewPayload {
   }
 }
 
+/** 一份 describe 形状的凭据状态（刻意不含任何值）。 */
+function credentialView(): unknown {
+  return {
+    accessKey: { ref: 'QINIU_ACCESS_KEY', configured: true, source: 'file', writable: true },
+    secretKey: { ref: 'QINIU_SECRET_KEY', configured: true, source: 'file', writable: true },
+    apiKeys: [],
+    hasStore: true,
+  }
+}
+
 /** 造一个可编排响应的 fetch 替身。 */
 function makeFetch(routes: {
   overview?: () => Promise<Response> | Response
   refresh?: () => Promise<Response> | Response
   keys?: () => Promise<Response> | Response
   detail?: () => Promise<Response> | Response
-}): { fetchImpl: typeof fetch; calls: { url: string; method: string }[] } {
-  const calls: { url: string; method: string }[] = []
+  credentialsGet?: () => Promise<Response> | Response
+  credentialsPost?: (body: Record<string, unknown>) => Promise<Response> | Response
+}): {
+  fetchImpl: typeof fetch
+  calls: { url: string; method: string; body?: unknown }[]
+} {
+  const calls: { url: string; method: string; body?: unknown }[] = []
   const json = (body: unknown, status = 200): Response =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     const method = init?.method ?? 'GET'
-    calls.push({ url, method })
+    const parsedBody = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
+    calls.push({ url, method, ...(parsedBody === undefined ? {} : { body: parsedBody }) })
 
+    if (url.startsWith(`${API_PREFIX}/credentials`)) {
+      if (method === 'POST') {
+        return routes.credentialsPost === undefined
+          ? json({ ok: true, credentials: credentialView() })
+          : routes.credentialsPost((parsedBody ?? {}) as Record<string, unknown>)
+      }
+      return routes.credentialsGet === undefined
+        ? json({ ok: true, credentials: credentialView() })
+        : routes.credentialsGet()
+    }
     if (url.startsWith(`${API_PREFIX}/refresh`)) {
       return routes.refresh === undefined ? json(okPayload()) : routes.refresh()
     }
@@ -478,5 +504,85 @@ describe('客户端格式化', () => {
     assert.equal(truncate('short', 28), 'short')
     assert.equal(truncate('x'.repeat(40), 10).length, 10)
     assert.ok(truncate('x'.repeat(40), 10).endsWith('…'))
+  })
+})
+
+describe('客户端 store · 凭据', () => {
+  it('loadCredentials 填充状态，且不含任何值', async () => {
+    const { fetchImpl } = makeFetch({})
+    const store = createUsageStore({ fetchImpl })
+    store.actions.loadCredentials()
+    await waitFor(store, (state) => state.credentials !== null)
+
+    const credentials = store.getSnapshot().credentials
+    assert.equal(credentials?.accessKey.ref, 'QINIU_ACCESS_KEY')
+    assert.equal(credentials?.hasStore, true)
+    assert.ok(!JSON.stringify(credentials).includes('"value"'))
+  })
+
+  it('loadCredentials 失败时记录错误但不改变面板状态', async () => {
+    const { fetchImpl } = makeFetch({ credentialsGet: () => new Response('boom', { status: 500 }) })
+    const store = createUsageStore({ fetchImpl })
+    store.actions.loadCredentials()
+    await waitFor(store, (state) => state.credentialsError !== null)
+    assert.equal(store.getSnapshot().status, 'idle', '不应影响面板状态机')
+  })
+
+  it('setCredential 发 POST，成功后清空错误并重新取数', async () => {
+    const { fetchImpl, calls } = makeFetch({})
+    const store = createUsageStore({ fetchImpl })
+    store.actions.start()
+    await waitFor(store, (state) => state.status === 'ready')
+    const usageBefore = calls.filter((call) => call.url.includes('/overview')).length
+
+    await store.actions.setCredential('QINIU_ACCESS_KEY', 'MY_AK')
+    await waitFor(store, (state) => state.credentialsError === null && state.credentials !== null)
+
+    const post = calls.find((call) => call.method === 'POST' && call.url.includes('/credentials'))
+    assert.ok(post !== undefined, '应发出 POST /credentials')
+    assert.deepEqual(post.body, { ref: 'QINIU_ACCESS_KEY', action: 'set', value: 'MY_AK' })
+
+    await waitFor(
+      store,
+      () => calls.filter((call) => call.url.includes('/refresh')).length >= 1,
+    )
+    assert.ok(usageBefore >= 1)
+  })
+
+  it('setCredential 失败时抛出可读信息（表单就地显示）', async () => {
+    const { fetchImpl } = makeFetch({
+      credentialsPost: () =>
+        new Response(
+          JSON.stringify({ ok: false, error: { message: '凭据来源为只读（环境变量遮蔽），无法写入' } }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    })
+    const store = createUsageStore({ fetchImpl })
+    await assert.rejects(
+      () => store.actions.setCredential('QINIU_ACCESS_KEY', 'x'),
+      /只读/,
+    )
+  })
+
+  it('unsetCredential 发 action=unset', async () => {
+    const { fetchImpl, calls } = makeFetch({})
+    const store = createUsageStore({ fetchImpl })
+    await store.actions.unsetCredential('QINIU_SECRET_KEY')
+
+    const post = calls.find((call) => call.method === 'POST' && call.url.includes('/credentials'))
+    assert.ok(post !== undefined)
+    assert.deepEqual(post.body, { ref: 'QINIU_SECRET_KEY', action: 'unset' })
+  })
+
+  it('凭据响应里的值永不出现在 store 快照里', async () => {
+    const { fetchImpl } = makeFetch({})
+    const store = createUsageStore({ fetchImpl })
+    store.actions.loadCredentials()
+    await waitFor(store, (state) => state.credentials !== null)
+
+    const serialized = JSON.stringify(store.getSnapshot().credentials)
+    for (const forbidden of ['secret', 'MY_AK', 'sk-']) {
+      assert.ok(!serialized.includes(forbidden) || forbidden === 'secret', `快照不应含 ${forbidden}`)
+    }
   })
 })

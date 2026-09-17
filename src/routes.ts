@@ -211,6 +211,100 @@ export function makeRespackDetailRoute(service: QiniuUsageService): WebRoute {
 }
 
 /**
+ * `GET /credentials` —— 凭据状态。
+ *
+ * **只回传 describe 形状**（`configured` / `source` / `writable`），永远不含值。
+ * 这是设计文档 §11.1 的硬约束：浏览器永不接触 AK/SK。
+ *
+ * @param service - 用量服务。
+ * @returns 路由定义。
+ */
+export function makeCredentialsGetRoute(service: QiniuUsageService): WebRoute {
+  return {
+    kind: 'exact',
+    path: `${API_PREFIX}/credentials`,
+    handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+      if (!guard(req, res, ['GET'])) return
+      try {
+        ok(res, { ok: true, credentials: await service.describeCredentials() })
+      } catch (error) {
+        ok(res, { ok: false, error: toSourceError(error, 'usage') })
+      }
+    },
+  }
+}
+
+/**
+ * `POST /credentials` —— 写入或清除一个凭据引用。
+ *
+ * body：`{ ref, action: 'set', value }` 或 `{ ref, action: 'unset' }`。
+ *
+ * - `ref` 必须在本插件声明的白名单内（由 service 校验），因此这个接口
+ *   **不能写任意路径**。
+ * - 只读来源（环境变量）遮蔽时会由凭据服务拒绝，错误原样回传以便 UI 说明。
+ *
+ * @param service - 用量服务。
+ * @returns 路由定义。
+ */
+export function makeCredentialsSetRoute(service: QiniuUsageService): WebRoute {
+  return {
+    kind: 'exact',
+    path: `${API_PREFIX}/credentials`,
+    handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+      if (!guard(req, res, ['POST'])) return
+
+      const contentType = req.headers['content-type'] ?? ''
+      if (!contentType.includes('application/json')) {
+        writeJson(
+          res,
+          415,
+          { ok: false, error: 'content-type must be application/json' },
+          { 'cache-control': 'no-store' },
+        )
+        return
+      }
+
+      const body = await readJsonBody(req, { objectOnly: true })
+      if (body === null) {
+        writeJson(res, 400, { ok: false, error: 'invalid JSON body' }, { 'cache-control': 'no-store' })
+        return
+      }
+
+      const record = body as Record<string, unknown>
+      const ref = typeof record.ref === 'string' ? record.ref : ''
+      const action = record.action
+      if (ref === '' || (action !== 'set' && action !== 'unset')) {
+        writeJson(
+          res,
+          400,
+          { ok: false, error: "expected { ref, action: 'set'|'unset' }" },
+          { 'cache-control': 'no-store' },
+        )
+        return
+      }
+
+      try {
+        if (action === 'set') {
+          const value = typeof record.value === 'string' ? record.value : ''
+          await service.setCredential(ref, value)
+        } else {
+          await service.unsetCredential(ref)
+        }
+        // 写成功后回传新的 describe 结果，UI 据此更新状态。
+        ok(res, { ok: true, credentials: await service.describeCredentials() })
+      } catch (error) {
+        // 只读遮蔽、引用不在白名单、空值 —— 都是可预期失败，回传可读信息。
+        ok(res, {
+          ok: false,
+          error: toSourceError(error, 'usage'),
+          credentials: await service.describeCredentials().catch(() => null),
+        })
+      }
+    },
+  }
+}
+
+/**
  * 本插件当前注册的全部路由。
  *
  * @param service - 用量服务。
@@ -222,5 +316,7 @@ export function makeRoutes(service: QiniuUsageService): WebRoute[] {
     makeRefreshRoute(service),
     makeKeysRoute(service),
     makeRespackDetailRoute(service),
+    makeCredentialsGetRoute(service),
+    makeCredentialsSetRoute(service),
   ]
 }

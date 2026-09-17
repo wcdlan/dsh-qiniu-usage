@@ -13,6 +13,7 @@
 
 import type { KeysPayload, OverviewPayload, SourceError } from '../service.ts'
 import type { RespackDetail } from '../qiniu/respack.ts'
+import type { CredentialsView } from './CredentialsForm.tsx'
 
 /** 面板状态机。 */
 export type UiStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -38,6 +39,10 @@ export interface UsageState {
   keyFilter: string | null
   /** 最近一次下钻结果，按 `orderHash:poId` 缓存。 */
   details: Record<string, RespackDetail>
+  /** 凭据状态（describe 形状，永不含值）；未加载时为 `null`。 */
+  credentials: CredentialsView | null
+  /** 凭据表单的最近一次错误。 */
+  credentialsError: string | null
 }
 
 /** 面板对外暴露的动作。 */
@@ -56,6 +61,12 @@ export interface UsageStoreActions {
    * 闭包了，重建的实例组件拿不到。运行中也会按新值重装定时器。
    */
   setPollIntervalMs(intervalMs: number): void
+  /** 读取凭据状态（describe 形状）。 */
+  loadCredentials(): void
+  /** 写入一个凭据引用。 */
+  setCredential(ref: string, value: string): Promise<void>
+  /** 清除一个凭据引用。 */
+  unsetCredential(ref: string): Promise<void>
 }
 
 /** 组件消费的只读视图。 */
@@ -98,6 +109,8 @@ function initialState(options: UsageStoreOptions): UsageState {
     keys: [],
     keyFilter: null,
     details: {},
+    credentials: null,
+    credentialsError: null,
   }
 }
 
@@ -244,6 +257,64 @@ export function createUsageStore(options: UsageStoreOptions = {}): UsageStoreVie
           // Key 清单是增强项，失败静默：面板仍可显示"全部 Key"。
         }
       })()
+    },
+
+    loadCredentials(): void {
+      void (async () => {
+        try {
+          const raw = await requestJson('/credentials')
+          if (typeof raw !== 'object' || raw === null) return
+          const record = raw as { ok?: boolean; credentials?: CredentialsView; error?: { message?: string } }
+          if (record.ok !== true || record.credentials === undefined) {
+            emit({ ...state, credentialsError: record.error?.message ?? 'failed to read credential status' })
+            return
+          }
+          emit({ ...state, credentials: record.credentials, credentialsError: null })
+        } catch (error) {
+          emit({
+            ...state,
+            credentialsError: error instanceof Error ? error.message : String(error),
+          })
+        }
+      })()
+    },
+
+    async setCredential(ref: string, value: string): Promise<void> {
+      const raw = await requestJson('/credentials', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ref, action: 'set', value }),
+      })
+      const record = raw as { ok?: boolean; credentials?: CredentialsView; error?: { message?: string } }
+      if (record.ok !== true) {
+        // 只读遮蔽、引用不在白名单等都是可预期失败 —— 抛出以便表单就地显示。
+        throw new Error(record.error?.message ?? 'failed to save credential')
+      }
+      emit({
+        ...state,
+        ...(record.credentials === undefined ? {} : { credentials: record.credentials }),
+        credentialsError: null,
+      })
+      // 凭据变了，旧数据可能来自失效凭据 —— 重新取数。
+      void load('refresh')
+    },
+
+    async unsetCredential(ref: string): Promise<void> {
+      const raw = await requestJson('/credentials', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ref, action: 'unset' }),
+      })
+      const record = raw as { ok?: boolean; credentials?: CredentialsView; error?: { message?: string } }
+      if (record.ok !== true) {
+        throw new Error(record.error?.message ?? 'failed to clear credential')
+      }
+      emit({
+        ...state,
+        ...(record.credentials === undefined ? {} : { credentials: record.credentials }),
+        credentialsError: null,
+      })
+      void load('refresh')
     },
 
     loadDetail(orderHash: string, poId: number): void {

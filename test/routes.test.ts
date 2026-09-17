@@ -11,6 +11,8 @@ import { strict as assert } from 'node:assert'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { describe, it } from 'vitest'
 import {
+  makeCredentialsGetRoute,
+  makeCredentialsSetRoute,
   makeKeysRoute,
   makeOverviewRoute,
   makeRefreshRoute,
@@ -39,6 +41,8 @@ function makeRequest(options: {
   secFetchSite?: string
   /** 请求体原文；省略时视为空 body。 */
   body?: string
+  /** 刻意不带 content-type，用于验证 415 分支。 */
+  omitContentType?: boolean
 }): IncomingMessage {
   const body = options.body
   return {
@@ -48,6 +52,11 @@ function makeRequest(options: {
       host: options.host ?? '127.0.0.1:3080',
       ...(options.origin === undefined ? {} : { origin: options.origin }),
       ...(options.secFetchSite === undefined ? {} : { 'sec-fetch-site': options.secFetchSite }),
+      // 带 body 的请求按真实浏览器行为带上 JSON content-type；
+      // 凭据路由会据此拒绝非 JSON 请求（415）。
+      ...(body === undefined || options.omitContentType === true
+        ? {}
+        : { 'content-type': 'application/json' }),
     },
     socket: { remoteAddress: options.remoteAddress ?? '127.0.0.1' },
     // readJsonBody 用 for await 读请求体，替身必须实现 async iterable。
@@ -545,5 +554,209 @@ describe('路由 · /respack/detail', () => {
     )
     assert.equal(captured.status, 403)
     assert.equal(detailCalls.length, 0)
+  })
+})
+
+describe('路由 · /credentials', () => {
+  /** 造一个记录调用的 service 替身（凭据相关）。 */
+  function makeCredentialServiceStub(overrides: {
+    describe?: () => Promise<unknown>
+    set?: (ref: string, value: string) => Promise<void>
+    unset?: (ref: string) => Promise<void>
+  } = {}): {
+    service: Parameters<typeof makeCredentialsGetRoute>[0]
+    sets: { ref: string; value: string }[]
+    unsets: string[]
+  } {
+    const sets: { ref: string; value: string }[] = []
+    const unsets: string[] = []
+    const stub = {
+      describeCredentials:
+        overrides.describe
+        ?? (async () => ({
+          accessKey: { ref: 'QINIU_ACCESS_KEY', configured: true, source: 'file', writable: true },
+          secretKey: { ref: 'QINIU_SECRET_KEY', configured: true, source: 'file', writable: true },
+          apiKeys: [],
+          hasStore: true,
+        })),
+      setCredential: async (ref: string, value: string) => {
+        sets.push({ ref, value })
+        if (overrides.set !== undefined) await overrides.set(ref, value)
+      },
+      unsetCredential: async (ref: string) => {
+        unsets.push(ref)
+        if (overrides.unset !== undefined) await overrides.unset(ref)
+      },
+    }
+    return { service: stub as unknown as Parameters<typeof makeCredentialsGetRoute>[0], sets, unsets }
+  }
+
+  it('GET 只回传 describe 形状，响应里不含任何值', async () => {
+    const { service } = makeCredentialServiceStub()
+    const route = makeCredentialsGetRoute(service)
+    const captured: CapturedResponse = {}
+    await route.handler(
+      makeRequest({ url: '/api/dsh-qiniu-usage/credentials' }),
+      makeResponse(captured) as ServerResponse,
+    )
+
+    assert.equal(captured.status, 200)
+    const serialized = JSON.stringify(captured.body)
+    // 关键断言：整个响应体里不得出现任何"值"字段。
+    assert.ok(!serialized.includes('"value"'), `响应不应含 value 字段：${serialized}`)
+    assert.ok(serialized.includes('configured'))
+    assert.equal(captured.headers?.['cache-control'], 'no-store')
+  })
+
+  it('GET 非回环被拒绝', async () => {
+    const { service } = makeCredentialServiceStub()
+    const route = makeCredentialsGetRoute(service)
+    const captured: CapturedResponse = {}
+    await route.handler(
+      makeRequest({ url: '/api/dsh-qiniu-usage/credentials', remoteAddress: '10.0.0.5' }),
+      makeResponse(captured) as ServerResponse,
+    )
+    assert.equal(captured.status, 403)
+  })
+
+  it('POST 拒绝非 JSON content-type（415）', async () => {
+    const { service, sets } = makeCredentialServiceStub()
+    const route = makeCredentialsSetRoute(service)
+    const captured: CapturedResponse = {}
+    await route.handler(
+      makeRequest({
+        method: 'POST',
+        url: '/api/dsh-qiniu-usage/credentials',
+        body: JSON.stringify({ ref: 'QINIU_ACCESS_KEY', action: 'set', value: 'AK' }),
+        omitContentType: true,
+      }),
+      makeResponse(captured) as ServerResponse,
+    )
+    assert.equal(captured.status, 415)
+    assert.equal(sets.length, 0)
+  })
+
+  it('POST 拒绝畸形 body（400）', async () => {
+    const bad = ['{}', '{"ref":"X"}', '{"ref":"X","action":"delete"}', '{"action":"set","value":"v"}']
+    for (const body of bad) {
+      const { service, sets, unsets } = makeCredentialServiceStub()
+      const route = makeCredentialsSetRoute(service)
+      const captured: CapturedResponse = {}
+      await route.handler(
+        makeRequest({ method: 'POST', url: '/api/dsh-qiniu-usage/credentials', body }),
+        makeResponse(captured) as ServerResponse,
+      )
+      assert.equal(captured.status, 400, `${body} 应被拒绝`)
+      assert.equal(sets.length + unsets.length, 0)
+    }
+  })
+
+  it('POST set 透传 ref 与 value，并回传新的 describe', async () => {
+    const { service, sets } = makeCredentialServiceStub()
+    const route = makeCredentialsSetRoute(service)
+    const captured: CapturedResponse = {}
+    await route.handler(
+      makeRequest({
+        method: 'POST',
+        url: '/api/dsh-qiniu-usage/credentials',
+        body: JSON.stringify({ ref: 'QINIU_ACCESS_KEY', action: 'set', value: 'MY_AK' }),
+      }),
+      makeResponse(captured) as ServerResponse,
+    )
+    assert.deepEqual(sets, [{ ref: 'QINIU_ACCESS_KEY', value: 'MY_AK' }])
+    assert.equal((captured.body as { ok: boolean }).ok, true)
+    assert.ok((captured.body as { credentials: unknown }).credentials !== undefined)
+    // 响应里同样不得回显刚写入的值。
+    assert.ok(!JSON.stringify(captured.body).includes('MY_AK'), '响应不得回显凭据值')
+  })
+
+  it('POST unset 走清除路径', async () => {
+    const { service, unsets } = makeCredentialServiceStub()
+    const route = makeCredentialsSetRoute(service)
+    await route.handler(
+      makeRequest({
+        method: 'POST',
+        url: '/api/dsh-qiniu-usage/credentials',
+        body: JSON.stringify({ ref: 'QINIU_SECRET_KEY', action: 'unset' }),
+      }),
+      makeResponse({}) as ServerResponse,
+    )
+    assert.deepEqual(unsets, ['QINIU_SECRET_KEY'])
+  })
+
+  it('只读遮蔽导致的失败回传 ok=false 与可读信息，且不是 5xx', async () => {
+    const { service } = makeCredentialServiceStub({
+      set: async () => {
+        throw new Error('凭据来源为只读（环境变量遮蔽），无法写入')
+      },
+    })
+    const route = makeCredentialsSetRoute(service)
+    const captured: CapturedResponse = {}
+    await route.handler(
+      makeRequest({
+        method: 'POST',
+        url: '/api/dsh-qiniu-usage/credentials',
+        body: JSON.stringify({ ref: 'QINIU_ACCESS_KEY', action: 'set', value: 'AK' }),
+      }),
+      makeResponse(captured) as ServerResponse,
+    )
+    assert.equal(captured.status, 200, '可预期失败不应变成 5xx')
+    const body = captured.body as { ok: boolean; error: { message: string } }
+    assert.equal(body.ok, false)
+    assert.ok(body.error.message.includes('只读'))
+  })
+
+  it('引用不在白名单时回传 ok=false（由 service 校验）', async () => {
+    const { service } = makeCredentialServiceStub({
+      set: async (ref: string) => {
+        throw new Error(`不允许写入未声明的凭据引用：${ref}`)
+      },
+    })
+    const route = makeCredentialsSetRoute(service)
+    const captured: CapturedResponse = {}
+    await route.handler(
+      makeRequest({
+        method: 'POST',
+        url: '/api/dsh-qiniu-usage/credentials',
+        body: JSON.stringify({ ref: '/etc/passwd', action: 'set', value: 'x' }),
+      }),
+      makeResponse(captured) as ServerResponse,
+    )
+    const body = captured.body as { ok: boolean; error: { message: string } }
+    assert.equal(body.ok, false)
+    assert.ok(body.error.message.includes('白名单') || body.error.message.includes('未声明'))
+  })
+
+  it('POST 的非回环请求被拒绝', async () => {
+    const { service, sets } = makeCredentialServiceStub()
+    const route = makeCredentialsSetRoute(service)
+    const captured: CapturedResponse = {}
+    await route.handler(
+      makeRequest({
+        method: 'POST',
+        url: '/api/dsh-qiniu-usage/credentials',
+        remoteAddress: '10.0.0.5',
+        body: JSON.stringify({ ref: 'QINIU_ACCESS_KEY', action: 'set', value: 'AK' }),
+      }),
+      makeResponse(captured) as ServerResponse,
+    )
+    assert.equal(captured.status, 403)
+    assert.equal(sets.length, 0)
+  })
+
+  it('GET 失败时回传 ok=false 而不是 5xx', async () => {
+    const { service } = makeCredentialServiceStub({
+      describe: async () => {
+        throw new Error('describe 炸了')
+      },
+    })
+    const route = makeCredentialsGetRoute(service)
+    const captured: CapturedResponse = {}
+    await route.handler(
+      makeRequest({ url: '/api/dsh-qiniu-usage/credentials' }),
+      makeResponse(captured) as ServerResponse,
+    )
+    assert.equal(captured.status, 200)
+    assert.equal((captured.body as { ok: boolean }).ok, false)
   })
 })
