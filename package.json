@@ -26,7 +26,10 @@
     "lib/**/*.d.ts",
     "lib/**/*.d.ts.map",
     "src",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "NOTICE",
+    "DESIGN.md",
+    ".env.example"
   ],
   "license": "Apache-2.0",
   "keywords": [
