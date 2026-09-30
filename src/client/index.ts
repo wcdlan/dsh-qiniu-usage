@@ -1,6 +1,9 @@
 // 安全不变量：浏览器半区不存在任何读取 AK/SK 的路径，`test/bundle.test.ts` 断言这一点。
 import type {Context as ClientContext} from '@deepseek-ai/cordis'
-// 仅类型：拉入 ctx.locale / ctx.slots / connection 的 Context 合并。
+// 仅类型：拉入 ctx.locale / ctx.slots / connection 的 Context 合并。抹掉这几行会让
+// `ctx.locale` / `ctx.slots` 报 TS2339 —— 它们是纯副作用 import，没有绑定，别当冗余删。
+import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {SlotComponent} from '@deepseek-ai/dsh-client-ui-slots'
 import type {Config} from '../config.ts'
 import {en, NS, zh} from './locales.ts'

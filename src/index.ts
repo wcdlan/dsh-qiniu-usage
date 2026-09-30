@@ -3,8 +3,11 @@
 // 缺 `webServer`（headless）则 `inject` 不满足，插件整个不装载。
 
 import type {Context} from '@deepseek-ai/cordis'
-// 仅类型：把 host-webserver 的 `ctx.webServer` 合并进 Context。
+// 仅类型：把 host-webserver 的 `ctx.webServer` 合并进 Context。抹掉这几行会让
+// `ctx.settings` / `ctx.webServer` 报 TS2339 —— 纯副作用 import，没有绑定，别当冗余删。
+import type {} from '@deepseek-ai/dsh-host-webserver'
 // 仅类型：把 settings 的 `ctx.settings` 合并进 Context。
+import type {} from '@deepseek-ai/dsh-settings'
 import {Config, type Config as ConfigShape, resolveConfig, type ResolvedConfig, SETTINGS_NAMESPACE,} from './config.ts'
 import {CredentialAccess} from './credentials.ts'
 import {mountOnce} from './mount-once.ts'
