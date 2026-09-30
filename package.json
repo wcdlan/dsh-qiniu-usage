@@ -26,6 +26,7 @@
     "lib/**/*.d.ts",
     "lib/**/*.d.ts.map",
     "src",
+    "img",
     "cordis.patch.yml",
     "NOTICE",
     "DESIGN.md",

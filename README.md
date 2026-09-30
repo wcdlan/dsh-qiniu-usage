@@ -12,209 +12,125 @@ leaving the browser:
 - **How much resource-pack quota is left this month?** — per-billing-item
   capacity / used / remaining, plus per-pack used amount and expiry date.
 
-It renders as a **「七牛云用量」 section in Settings**, and as a **glance card
-pinned below the left session list** (styled after the host's own 今日用量 card):
-collapsed it is one line with today's total, expanded it shows **model usage**
-only, and the **Details** button inside opens the resource-pack information. It
-is **read-only against Qiniu** — it never creates, modifies or bills anything.
+It renders as a **「七牛云用量」 section in Settings** and as a **glance card below
+the left session list**. The plugin is **read-only against Qiniu** — it never
+creates, modifies or bills anything. The UI ships in Chinese and English and
+follows the host theme.
 
-```
-┌ 七牛云用量 ────────────────────────────  ⟳ 刷新   12:04:31 ┐
-│ 账号 [默认账号]   Key [我的测试Key ▾]   日期 [今天 ▾]        │
-│ ⚠ 当天数据可能有延迟（上游水位 12:00）                       │
-├ 今日各模型用量 ─────────────────────────────────────────────┤
-│ ▇▇▇▇▇▇▇▇▇▇ deepseek-v4-pro   输入 1.24M  输出 0.31M  1.55M  │
-│ ▇▇▇▇       qwen-max          输入 0.42M  输出 0.11M  0.53M  │
-│ 合计 2.08M tokens · 4 个模型                                │
-├ 资源包利用情况（本月）──────────────────────────────────────┤
-│ AI大模型融合资源包 / 中国大陆   ▇▇▇▇▇▇▇░░░  68%             │
-│   当月可用 100 GB  已用 68 GB  剩余 32 GB                    │
-└─────────────────────────────────────────────────────────────┘
-```
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./img/settings.png">
+    <img src="./img/settings-light.png" width="520" alt="Settings → 七牛云用量">
+  </picture>
+  <br>
+  <sub><b>Settings → 七牛云用量</b> · credentials, key roster, auto-refresh</sub>
+</div>
 
-## Status
+<div align="center">
+  <table>
+    <tr>
+      <td align="center" valign="top">
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="./img/details-model.png">
+          <img src="./img/details-model-light.png" height="440" alt="Details · model usage">
+        </picture>
+        <br>
+        <sub><b>Details · model usage</b><br>date / key filters, per-model input / output / total</sub>
+      </td>
+      <td width="28">&nbsp;</td>
+      <td align="center" valign="top">
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="./img/details-respack.png">
+          <img src="./img/details-respack-light.png" height="440" alt="Details · resource packs">
+        </picture>
+        <br>
+        <sub><b>Details · resource packs</b><br>month-to-date utilisation, per-pack detail</sub>
+      </td>
+    </tr>
+  </table>
+</div>
 
-| | |
-|---|---|
-| Implemented | Signing, usage normalisation, resource packs, the settings panel, the credential form, the sidebar glance card |
-| Tests | 352 passing across 17 files (`npm test`) |
-| Not yet done | **End-to-end run against a real Qiniu account** — every upstream fact in this plugin comes from documentation and fixtures. If something is off with real data, [`scripts/smoke.mjs`](#verify-against-a-real-account) is the tool that shows it. |
-
-The UI ships in Chinese and English and follows the host theme.
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./img/sidebar-card.png">
+    <img src="./img/sidebar-card-light.png" width="400" alt="Sidebar glance card">
+  </picture>
+  <br>
+  <sub><b>Sidebar glance card</b> · one line collapsed, the three largest models plus
+  <b>Details</b> / <b>Refresh</b> expanded</sub>
+</div>
 
 ## Requirements
 
 | | |
 |---|---|
-| DSH | `>= 0.1.5-rc.1` (`dsh --version`) |
+| DSH | `>= 0.1.5-rc.1` (`dsh --version`), on a profile that boots the Web app — usually `web` |
 | Node | `^22.19.0 \|\| >=24.0.0` |
-| Profile | any profile that boots the Web app — usually `web` |
-| Qiniu | An **AccessKey / SecretKey** pair. A `sk-` token alone is not enough: the resource-pack (finance) API only accepts management credentials. |
+| Qiniu | An **AccessKey / SecretKey** pair. A `sk-` token alone is not enough: the resource-pack (finance) API only accepts management credentials, and that AK needs billing/IAM financial permission. Without it the resource-pack cards show a targeted hint while the usage half keeps working. |
 
 ## Install
 
-This package is **not published to npm** — install it from a local checkout.
-[`dsh plugin`](https://github.com/deepseek-ai/deepseek-harness) is a thin `pnpm`
-forwarder that runs inside the profile directory, then reconciles the profile's
-bundle list automatically.
-
-### 1. Build the plugin
-
-The runtime artifacts live in `lib/`, which is **not committed to git**:
+The package is **not published to npm** — install it from a local checkout.
+`lib/` is gitignored, so build it first:
 
 ```bash
 cd /path/to/dsh-qiniu-usage
-npm install
-npm run build          # → lib/index.js, lib/client.js, lib/types/**
+npm install && npm run build
+dsh plugin --profile web add link:$PWD
+dsh web
 ```
 
-`npm test` is optional but cheap (~1 s) — run it if you want to confirm the
-checkout is healthy before wiring it into your GUI.
+Open **Settings → 七牛云用量**. That is the whole install.
 
-### 2. Register it with your profile
+`dsh plugin` is a thin `pnpm` forwarder running inside the profile directory. It
+records the dependency in `$DSH_HOME/profiles/web/package.json` and, because the
+package declares `dsh.bundle.patch`, appends the package name to
+`dsh.profile.bundles` automatically — no manual patch-layer editing, and the web
+app is **not** rebuilt (the shell serves `exports["./client"]` at
+`/plugins/<id>/client.js`).
 
-```bash
-dsh plugin --profile web add link:/path/to/dsh-qiniu-usage
-```
-
-That is the whole install. Behind the scenes:
-
-1. `pnpm add` records the dependency in `$DSH_HOME/profiles/web/package.json`.
-2. The CLI sees that the package declares `dsh.bundle.patch`
-   (`./cordis.patch.yml`) and **automatically appends it to
-   `dsh.profile.bundles`** — there is no manual patch-layer editing step.
-3. On the next boot, the Web shell discovers the package's `dsh.client`
-   declaration and serves `exports["./client"]` at `/plugins/<id>/client.js`.
-   **The web app is not rebuilt.**
-
-### 3. Restart
+<details>
+<summary>Other install sources, updating, uninstalling</summary>
 
 ```bash
-dsh web          # or: dsh --profile web
-```
-
-Open **Settings → 七牛云用量**. If the section is missing, see
-[Troubleshooting](#troubleshooting).
-
-### Other install sources
-
-`add` accepts anything `pnpm` does, and the bundle list is reconciled against the
-**real installed package name** in every case:
-
-```bash
-# local checkout — symlink, live edits are picked up after a rebuild (recommended)
-dsh plugin --profile web add link:/path/to/dsh-qiniu-usage
-
-# copy instead of symlink (no live edits)
+# copy instead of symlink (live edits no longer picked up)
 dsh plugin --profile web add file:/path/to/dsh-qiniu-usage
 
-# a packed tarball — build it first, then pack
+# a packed tarball
 cd /path/to/dsh-qiniu-usage && npm run build && npm pack
 dsh plugin --profile web add /path/to/dsh-qiniu-usage-<version>.tgz
 
-# straight from the git remote (⚠ lib/ is gitignored — see below)
-dsh plugin --profile web add git+https://git.nagioa.cn/EntropyCrop/dsh-qiniu-usage.git
-```
+# update
+cd /path/to/dsh-qiniu-usage && git pull && npm install && npm run build && dsh web
 
-> ⚠ **A git install arrives without `lib/`.** The repository commits `src/` only,
-> and the package has no `prepare` script, so `pnpm` installs a package whose
-> `main` (`lib/index.js`) does not exist — the plugin will not load. Build it
-> yourself first:
->
-> ```bash
-> git clone https://git.nagioa.cn/EntropyCrop/dsh-qiniu-usage.git ~/dsh-qiniu-usage
-> cd ~/dsh-qiniu-usage && npm install && npm run build
-> dsh plugin --profile web add link:$PWD
-> ```
->
-> A tarball from `npm pack` is fine because `npm run build` ran before packing.
-
-### Manual install (no CLI)
-
-If you would rather edit files: add the dependency to
-`$DSH_HOME/profiles/web/package.json` and append the package name to
-`dsh.profile.bundles`, then run `dsh plugin --profile web install`.
-
-<details>
-<summary>What the profile manifest should look like</summary>
-
-```jsonc
-{
-  "dependencies": {
-    "dsh-qiniu-usage": "link:/path/to/dsh-qiniu-usage"
-  },
-  "dsh": {
-    "profile": {
-      "bundles": [
-        "@deepseek-ai/dsh-base",
-        "@deepseek-ai/dsh-web-app",
-        // … other bundles …
-        "dsh-qiniu-usage"
-      ],
-      "patchReload": "live"
-    }
-  }
-}
-```
-
-The bundle name must match the package's `name` field — not the path or the git
-URL.
-
-</details>
-
-### Updating an installed plugin
-
-```bash
-cd /path/to/dsh-qiniu-usage
-git pull && npm install && npm run build
-dsh web          # restart
-```
-
-With a `link:` install the profile keeps pointing at the same checkout, so there
-is nothing to re-add. Restart `dsh web` after **host-half** changes; after
-**client-half** changes a rebuild plus a page refresh is enough.
-
-### Uninstall
-
-```bash
+# uninstall
 dsh plugin --profile web remove dsh-qiniu-usage
 ```
 
-The CLI drops the dependency and removes it from `dsh.profile.bundles`.
-Credentials you saved through the GUI live in the DSH credential store and are
-**not** removed — clear them in **Settings → 七牛云用量 → 凭据** first if you want
-them gone.
+A `git+…` install arrives **without `lib/`** and the package has no `prepare`
+script, so it will not load — build it yourself and `add link:$PWD` instead.
+
+To install without the CLI, add the dependency to
+`$DSH_HOME/profiles/web/package.json` and append the package name (matching its
+`name` field, not the path or git URL) to `dsh.profile.bundles`, then run
+`dsh plugin --profile web install`.
+
+Uninstalling drops the dependency and the bundle entry, but credentials you saved
+through the GUI live in the DSH credential store and are **not** removed. Clear
+them in **Settings → 七牛云用量 → 凭据** first if you want them gone.
+
+With a `link:` install the profile keeps pointing at the same checkout. Restart
+`dsh web` after **host-half** changes; after **client-half** changes a rebuild
+plus a page refresh is enough.
+
+</details>
 
 ## Configure
 
+### Credentials
+
 The plugin reads credentials **by reference name** — a POSIX environment-variable
-name — never by value:
-
-| Setting | Default | Meaning |
-|---|---|---|
-| `enabled` | `true` | Master switch. When off, no routes are registered and no upstream request is ever made. |
-| `accessKeyRef` | `QINIU_ACCESS_KEY` | **Name** of the store entry holding the AccessKey |
-| `secretKeyRef` | `QINIU_SECRET_KEY` | Same, for the SecretKey |
-| `apiKeys[]` | `[]` | Optional per-key `{ label, tokenRef }` entries for precise single-key queries |
-| `defaultKey` | `""` | Key label selected on open; empty = all keys (account total) |
-| `defaultDay` | `today` | Initial date scope: `today` / `yesterday` / `YYYY-MM-DD` |
-| `timezone` | `Asia/Shanghai` | Upstream accepts IANA names only (`Local` is rejected) |
-| `usageBaseUrl` | `https://api.qnaigc.com` | Model-usage API base |
-| `financeBaseUrl` | `https://api.qiniu.com` | Resource-pack / finance API base |
-| `todayTtlSec` | `60` | Cache TTL (s) for today's hourly data; `10`–`600` |
-| `dashboardTtlSec` | `600` | Cache TTL (s) for past days and resource packs; `60`–`3600` |
-| `pollIntervalSec` | `5` | Client auto-refresh interval in seconds; `0` = manual refresh only |
-| `sidebarCard` | `true` | Show the glance card at the sidebar foot; off keeps the panel settings-only |
-
-Everything has a default, so an empty config is valid.
-
-The panel itself exposes the key/date selectors, refresh and the credential form.
-The remaining keys are edited the same way as any other DSH plugin setting —
-through the profile's plugin config (for example an id-targeted row in
-`$DSH_HOME/profiles/web/cordis.patch.yml`). `pollIntervalSec` and
-`sidebarCard` are picked up live; the rest apply on the next `dsh web` boot.
-
-### Provide the credentials — two ways
+name — never by value. Two ways to supply them:
 
 **A. Environment variables (read-only).** Export them in the environment that
 launches `dsh`:
@@ -225,88 +141,107 @@ export QINIU_SECRET_KEY=...
 dsh web
 ```
 
-Note that DSH does **not** read a `.env` file automatically — see
-[`.env.example`](./.env.example) for the variable names, then export them or pass
-them to your shell. Environment-backed entries can only be read, so the GUI form
-is greyed out and reports `来源：环境变量 QINIU_ACCESS_KEY · 只读`.
+DSH does **not** read a `.env` file automatically — see [`.env.example`](./.env.example)
+for the variable names. Environment-backed entries can only be read, so the GUI
+form is greyed out and reports `来源：环境变量 QINIU_ACCESS_KEY · 只读`.
 
 **B. The GUI credential form.** In **Settings → 七牛云用量 → 凭据**, type the AK
-and SK and save; they land in the DSH credential store and the plugin resolves
-them on every upstream call, so **rotating a key takes effect on the next
-request — no restart**. The form shows the *reference names* (read-only) above
-the *value* inputs, because that is the actual split: the config holds the name,
-the store holds the value.
+and SK and save; they land in the DSH credential store, and rotating a key takes
+effect on the next request — **no restart**. The form shows the *reference names*
+(read-only) above the *value* inputs, because that is the actual split: the config
+holds the name, the store holds the value.
 
-### Why an AK/SK pair is required
+### Settings
 
-The resource-pack (finance) API accepts Qiniu **management credentials** only — an
-`sk-` bearer token cannot read it. So AK/SK is mandatory and `apiKeys[]` is an
-optional precision enhancement for single-key queries, not the main path. The
-finance API additionally needs an AK with billing/IAM financial permission;
-without it the resource-pack cards show a targeted hint while the usage half
-keeps working.
+| Setting | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | Master switch. When off, no routes are registered and no upstream request is ever made. |
+| `accessKeyRef` | `QINIU_ACCESS_KEY` | **Name** of the store entry holding the AccessKey |
+| `secretKeyRef` | `QINIU_SECRET_KEY` | Same, for the SecretKey |
+| `timezone` | `Asia/Shanghai` | Upstream accepts IANA names only (`Local` is rejected) |
+| `pollIntervalSec` | `5` | Client auto-refresh interval in seconds; `0` = manual refresh only |
+| `sidebarCard` | `true` | Show the glance card at the sidebar foot; off keeps the panel settings-only |
+
+Everything has a default, so an empty config is valid. The rest (`apiKeys[]`,
+`defaultDay`, `defaultKey`, the cache TTLs, the API base URLs) is documented in
+[`DESIGN.md`](./DESIGN.md) §10.1.
+
+Edit these through the profile's plugin config, like any other DSH plugin setting.
+`pollIntervalSec` and `sidebarCard` are picked up live; the rest apply on the next
+`dsh web` boot.
 
 ## Usage
 
-The settings page (**Settings → 七牛云用量**) holds **configuration only**; usage
-lives in the sidebar glance card:
+The settings page holds **configuration only** — the 凭据 form, a display-only key
+roster (**name / masked / today's status**, which doubles as "does this AK/SK work
+and which keys can it see"), and the auto-refresh interval.
 
-- **凭据** — the AccessKey / SecretKey form (written to the credential store, values
-  never echoed).
-- **Key list** — a table of the keys `/keys` returned (**name / masked / today's
-  status**), display only. The table is itself the answer to "does this AK/SK work
-  and which keys can it see" (it goes through the signed `/keys` route); for per-key
-  usage open the sidebar card's **Details** and pick a key in the usage section.
-- **Auto refresh** — interval in seconds, default **5**, `0` = manual only; written
-  back to the plugin config and applied live.
-- **Hints** — timezone, cache TTLs, key roster and the rest live in the profile
-  plugin config.
-
-The **sidebar glance card** sits at the foot of the left column, below the
-session list and above the Settings row (it hides itself when the sidebar
-collapses to the 56px rail). It has two levels:
-
-- **collapsed (default)** — one line: icon + title + value; click to expand;
-- **expanded** — **thumbnail information only** (the 3 largest models plus a
-  「其余 N 个模型合计」 line) with **Details** and **Refresh** buttons.
+The **sidebar glance card** sits at the foot of the left column (it hides itself
+when the sidebar collapses to the 56px rail). Collapsed it is one line — icon,
+title, today's total; expanded it shows the three largest models plus a
+「其余 N 个模型合计」 line, with **Details** and **Refresh** buttons.
 
 **Details** opens a centred dialog with two tabbed sections:
 
 - **Model usage** — date (today / yesterday) and key (all keys combined / a single
-  key) filters plus the per-model input / output / total table. Picking a specific
-  key **switches to yesterday automatically** and says why (upstream has not
-  attributed today's usage to individual keys yet).
+  key) filters plus the per-model input / output / total table.
 - **Resource packs** — month-to-date utilisation per billing item plus per-pack
-  detail (lifetime basis, deduction drill-down).
+  detail.
 
-The card title follows those filters: switch to yesterday and it reads 昨日用量, filter
-a key and it appends the key name — card and dialog share one store, so the number on
-the card can never mean something other than what it says.
-
-The expanded state is remembered **per browser** (`localStorage`, key
-`dsh-qiniu-usage:sidebar-card:expanded`). Turn the whole card off with
-`sidebarCard: false`.
-
-The card is always mounted, so it fetches once on mount and then polls at
-`pollIntervalSec` (default 5s; `0` = manual only, and the expanded view has
-Refresh). The upstream already caches today at an hourly cadence (`todayTtlSec`,
-default 60s), so a fast UI cadence does not hammer upstream. The settings page
-reads credential status and the key roster only — it fetches **no usage data**.
+The card title follows those filters: switch to yesterday and it reads 昨日用量,
+filter a key and it appends the key name — card and dialog share one store, so the
+number on the card can never mean something other than what it says. The expanded
+state is remembered per browser (`localStorage`, key
+`dsh-qiniu-usage:sidebar-card:expanded`).
 
 ## Security & privacy
 
-- **Credentials never reach the browser.** AK/SK exist only in the host process.
-  The client bundle contains no credential-reading path at all — asserted by
-  `test/bundle.test.ts`. The routes only ever return
-  `{ configured, source, writable }`, a shape with no slot for a value.
-- **Loopback-fenced routes.** Every route checks the socket, host and origin, and
-  ignores `X-Forwarded-For`; responses carry `cache-control: no-store`.
-- **Redacted logs.** The AccessKey appears as its first four characters. The
-  **SecretKey is never logged**.
-- **No disk writes for credentials.** The plugin writes only through the DSH
-  credential store, never to its own config file.
-- **Bounded errors.** Upstream error text is truncated and stripped of anything
-  credential-shaped before it reaches the UI.
+- **Credentials never reach the browser.** AK/SK exist only in the host process;
+  the routes only ever return `{ configured, source, writable }`, a shape with no
+  slot for a value.
+- **Loopback-fenced routes.** Every route checks the socket, host and origin,
+  ignores `X-Forwarded-For`, and responds with `cache-control: no-store`.
+- **Redacted logs.** The AccessKey appears as its first four characters; the
+  **SecretKey is never logged**. Credentials are written only through the DSH
+  credential store, never to the plugin's own config file.
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| The 「七牛云用量」 section does not appear | The bundle is not in `dsh.profile.bundles`. Check that `dsh plugin --profile web add …` succeeded, then restart `dsh web`. |
+| `Cannot find module …/lib/index.js` on boot | `lib/` was never built. Run `npm install && npm run build` in the checkout. |
+| `cannot get property "webServer" without inject` | Two copies of the plugin mounted at once. Keep a single entry in `dsh.profile.bundles`. |
+| Panel loads but every figure is an auth error | Credentials missing or wrong. Check the 凭据 card for `configured` / `source`. |
+| Resource-pack cards error, usage is fine | The AK lacks billing/IAM financial permission. |
+| Key list is empty | The roster could not be fetched: credentials missing or invalid, or the AK has no usage-query permission. |
+| No glance card in the sidebar | `sidebarCard` is `false`, or the sidebar is collapsed to the 56px rail. |
+| The Details dialog is covered by another overlay | The dialog uses `z-index: 60`; a host overlay above that covers it. |
+
+## Known limitations
+
+- **Per-key filtering is unavailable for today.** Upstream has not attributed the
+  current day's usage to individual keys yet and returns a single
+  `api_key: "unknown"` aggregate group. The key roster therefore comes from a
+  "last 30 days, up to yesterday" window, and selecting a key while viewing today
+  says plainly that the figures are account-wide. Query **yesterday or earlier**
+  for per-key numbers.
+- **Today's data is delayed.** The panel pins a standing warning and shows the data
+  watermark.
+- **Zero-usage keys cannot be enumerated.** The upstream usage response only lists
+  keys that had usage in the queried window.
+- **Lifetime vs month-to-date scope.** A pack's `used_amount` is lifetime
+  cumulative while `month-overview`'s `month_used` is month-to-date; the panel
+  labels both.
+- **The sidebar card depends on shell class names.** The plugin injects its
+  container straight into the shell's `footArea` (substring-matched on
+  `[class*=sidebarCol]` / `[class*=footArea]` / `[class*=settingsArea]`), because
+  the foot's only extension seat (`sidebar.footer.action`) is a flex row that cannot
+  host a block. If the shell renames those classes the card has no seat (no error; a
+  body-level observer waits for one to appear).
+- **Not yet verified against a real account.** Every upstream fact in this plugin
+  comes from documentation and fixtures. If something is off with real data,
+  `scripts/smoke.mjs` is the tool that shows it.
 
 ## Development
 
@@ -314,140 +249,35 @@ reads credential status and the key roster only — it fetches **no usage data**
 npm install
 npm run build      # lib/index.js, lib/client.js, lib/types/**
 npm run check      # tsc --noEmit
-npm test           # vitest — 353 tests
+npm test           # vitest
 ```
 
-The build produces two artifacts with different contracts, both asserted by
-`scripts/build.mjs` **before the artifact is written** — a format drift fails the
-build rather than the browser, and a failed build cannot leave a broken
-`lib/client.js` behind:
+The build emits two artifacts with different contracts, asserted by
+`scripts/build.mjs` before either is written:
 
-- `lib/index.js` — host half, self-contained ESM. No external `require`; the only
-  import is `node:crypto`.
+- `lib/index.js` — host half, self-contained ESM; the only import is `node:crypto`.
 - `lib/client.js` — browser half, a self-contained
   `window.__ModuleLoader__.load({ id, factory })` bundle with `react` as the only
   external.
 
-> **The two halves do not import symmetrically.** The host may import anything;
-> the browser half may only take *values* from pure modules (`react`, `src/client/**`,
-> `src/qiniu/usage.ts`). `src/qiniu/respack.ts` looks pure but reaches `node:crypto`
-> through `sign.ts`, so importing a single value from it breaks the whole client
-> bundle. Type-only imports are fine. This boundary is enforced by
-> `test/client-graph.test.ts`, which really runs esbuild over the client entry.
->
-> `npm test` also asserts that `lib/*.js` are **not older than their inputs**, so a
-> stale artifact can never be mistaken for evidence. If that check fails, run
-> `npm run build` — don't go looking for a logic bug.
+`src/qiniu/respack.ts` looks pure but reaches `node:crypto` through `sign.ts`, so
+the client half may only take *values* from `react`, `src/client/**` and
+`src/qiniu/usage.ts` — one bad value import breaks the whole client bundle.
+Type-only imports are fine.
 
-### Seeing the panel without a browser
+`node scripts/preview.mjs` renders the panel to HTML (`--theme dark|light`,
+`?w=<px>`), `node scripts/screenshots.mjs` regenerates the images in this README,
+and `node scripts/smoke.mjs` prints a normalised snapshot using AK/SK from the
+environment only. `smoke.mjs` is also the fastest way to verify upstream
+behaviour: with deliberately fake credentials it shows that the usage API reports
+authentication failure as **HTTP 200 + `{"status":false,"error":"UNAUTHENTICATED"}`**
+rather than a 401 — which is why the error classifier keys off the code text as
+well as the HTTP status.
 
-Iterate on layout by rendering it to HTML and screenshotting it instead of
-guessing at CSS:
-
-```bash
-node scripts/preview.mjs
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --headless=new --disable-gpu --no-sandbox --hide-scrollbars \
-  --disable-crashpad --crash-dumps-dir="$PWD/.tmp/crash" \
-  --user-data-dir="$PWD/.tmp/chrome-profile" --virtual-time-budget=2500 \
-  --force-device-scale-factor=2 --window-size=820,1500 \
-  --screenshot="$PWD/.tmp/shot.png" "file://$PWD/.tmp/preview.html?w=820&diag=1"
-```
-
-`preview.mjs` writes five documents: `.tmp/preview.html` (the settings page),
-`.tmp/preview-card.html` and
-`.tmp/preview-card-expanded.html` (the glance card, collapsed and expanded, inside
-a **simulated sidebar**) plus `.tmp/preview-detail.html` and
-`.tmp/preview-detail-packs.html` (the detail dialog's two sections). The last four
-include the host's own 今日用量 card for comparison.
-
-`?w=<px>` sets the simulated panel width — use it rather than `--window-size` for
-narrow widths, because Chrome clamps its window to ~500px and merely crops the
-shot, which looks like an overflow bug but is not. `?diag=1` lists any element
-wider than the panel, for locating whatever breaks the layout.
-
-### Verify against a real account
-
-```bash
-export QINIU_ACCESS_KEY=...
-export QINIU_SECRET_KEY=...
-node scripts/smoke.mjs                 # yesterday by default
-node scripts/smoke.mjs --day today
-node scripts/smoke.mjs --key 我的测试Key
-node scripts/smoke.mjs --json          # raw payload
-```
-
-The script reads credentials **only from the environment** and never writes them
-anywhere. It runs the TypeScript sources directly (Node 24), so it does not need
-`lib/` to be built. It prints the normalised usage and resource-pack snapshot.
-Exit codes: `0` success, `1` upstream/data failure, `2` missing credentials.
-
-It is also the fastest way to verify upstream behaviour: with deliberately fake
-credentials it demonstrates that the usage API reports authentication failure as
-**HTTP 200 + `{"status":false,"error":"UNAUTHENTICATED"}`** rather than a 401 —
-which is why the error classifier keys off the code text as well as the HTTP
-status.
-
-## Troubleshooting
-
-| Symptom | Cause / fix |
-|---|---|
-| The 「七牛云用量」 section does not appear | The bundle is not in `dsh.profile.bundles`. Check `dsh plugin --profile web add …` succeeded, then restart `dsh web`. |
-| `Cannot find module …/lib/index.js` on boot | `lib/` was never built (typical after a git install). Run `npm install && npm run build` in the checkout. |
-| `cannot get property "webServer" without inject` | Two copies of the plugin mounted at once. Keep a single entry in `dsh.profile.bundles`; a per-process `mountOnce` guard makes the second mount a no-op, but the duplicate should still be removed. |
-| The panel says the host half is not enabled | `enabled` is `false` in the plugin config. |
-| Panel loads but every figure is an auth error | Credentials missing or wrong. Check the 凭据 card for `configured` / `source`. |
-| Credential form is greyed out | The ref resolves from a read-only source (environment variable). Unset it and restart to make the form writable. |
-| Resource-pack cards error, usage is fine | The AK lacks billing/IAM financial permission. |
-| Selected key shows account-wide figures for today | Expected — see the first two limitations below. Query **yesterday or earlier**. |
-| No glance card in the sidebar | Check that `sidebarCard` is not `false`, and that the sidebar is expanded (wide) — the card hides itself in the 56px rail. If the shell renamed its sidebar classes the card temporarily has no seat; restart and reload after a host upgrade. |
-| The Details dialog is covered by another overlay | The dialog uses `z-index: 60`; a host overlay above that covers it. |
-
-## Known limitations
-
-- **Per-key statistics live in the detail dialog.** The settings page only lists keys
-  (name / masked / today's status); to see one key's usage, open the sidebar card's
-  **Details** → usage section and pick a key (it switches to yesterday automatically,
-  because upstream has not attributed today's usage to individual keys yet).
-- **Zero-usage keys cannot be enumerated.** The upstream usage response only lists
-  keys that had usage in the queried window, so a key with no usage on that day is
-  invisible. (Registrations under `apiKeys[]` still feed the key test and the
-  `/keys` route.)
-- **Per-key filtering is unavailable for today.** Measured against the real API:
-  for the current day the upstream has not attributed usage to individual keys yet
-  and returns a single `api_key: "unknown"` aggregate group. The key roster
-  therefore comes from a "last 30 days, up to yesterday" window (the dropdown still
-  shows real key names), and selecting a key while viewing today says plainly that
-  the figures are account-wide.
-- **Today's data is delayed.** The upstream documents this; the panel pins a
-  standing warning and shows the data watermark. Query *yesterday* or an explicit
-  date for trustworthy totals.
-- **`api_key` query filtering is not used.** The parameter's semantics are
-  undocumented, so key selection is done by fetching the whole account and
-  filtering locally.
-- **Lifetime vs month-to-date scope.** A pack's `used_amount` is lifetime
-  cumulative while `month-overview`'s `month_used` is month-to-date; the panel
-  labels both.
-- **The sidebar card depends on shell class names.** The plugin injects its
-  container straight into the shell's `footArea` (substring-matched on
-  `[class*=sidebarCol]` / `[class*=footArea]` / `[class*=settingsArea]`), because
-  the foot's only extension seat (`sidebar.footer.action`) is a flex row that
-  cannot host a block. If the shell renames those classes the card simply has no
-  seat (no error; a body-level observer waits for one to appear).
-- **Detail-dialog z-index.** The dialog is `position: fixed` with `z-index: 60`; a
-  host overlay above that would cover it.
-- **Billing permission.** The finance API needs an AK with billing/IAM financial
-  permission. Without it the resource-pack card shows a targeted hint and the usage
-  half keeps working.
-
-## Documentation
-
-- [`DESIGN.md`](./DESIGN.md) — the full design record: upstream API facts, signing
-  traps, route contract, data model, caching and rate-limiting, milestones, risk
-  register, and a log of the real problems hit during implementation. Read it
-  before contributing.
-- [`NOTICE`](./NOTICE) — attribution for adapted family-shared sources.
+[`DESIGN.md`](./DESIGN.md) is the full design record — upstream API facts, signing
+traps, route contract, data model, caching, and a log of the real problems hit
+during implementation. Read it before contributing.
 
 ## License
 
-Apache-2.0. See [`LICENSE`](./LICENSE) and [`NOTICE`](./NOTICE).
+Apache-2.0. See [`LICENSE`](./LICENSE) and [`NOTICE`](./NOTICE) for attribution.

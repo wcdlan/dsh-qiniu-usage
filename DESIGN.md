@@ -674,6 +674,12 @@ node scripts/preview.mjs
   窗口夹到最小值（约 500px），按更小的值出图只会把右侧**裁掉**，看起来像布局溢出，实为
   假象 —— 这个假象一度让我误判存在横向溢出。
 - `?diag=1` 在页面顶部列出超出面板宽度的元素，用于定位是谁撑破了布局。
+- `--theme dark|light` 选主题 token（默认 `dark`）。浅色那套取自宿主真实的
+  `--dsw-alias-*`（从宿主 bundle 的 `body` / `body[data-ds-dark-theme]` 规则解析而来），
+  因为浅色下卡片靠「白底 + 极淡描边」分层，近似值会糊成一片。
+- `scripts/screenshots.mjs` 把两套主题各跑一遍 `preview.mjs`，再**按元素盒子**裁剪、2x
+  重栅格化，产出 README 用的 `img/*.png`（浅色图带 `-light` 后缀，README 用 `<picture>`
+  按读者主题二选一）。
 
 ---
 
