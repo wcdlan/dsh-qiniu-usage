@@ -91,6 +91,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://git.nagioa.cn/EntropyCrop/dsh-qiniu-usage.git"
+    "url": "https://github.com/wcdlan/dsh-qiniu-usage"
   }
 }
