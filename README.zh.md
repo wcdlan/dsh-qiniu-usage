@@ -16,8 +16,8 @@
 
 <div align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./img/settings.png">
-    <img src="./img/settings-light.png" width="520" alt="设置 → 七牛云用量">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.giteeusercontent.com/wcdlan/dsh-qiniu-usage/raw/main/img/settings.png">
+    <img src="https://raw.giteeusercontent.com/wcdlan/dsh-qiniu-usage/raw/main/img/settings-light.png" width="520" alt="设置 → 七牛云用量">
   </picture>
   <br>
   <sub><b>设置 → 七牛云用量</b> · 凭据、Key 名册与自动刷新</sub>
@@ -28,8 +28,8 @@
     <tr>
       <td align="center" valign="top">
         <picture>
-          <source media="(prefers-color-scheme: dark)" srcset="./img/details-model.png">
-          <img src="./img/details-model-light.png" height="440" alt="详情 · 各模型用量">
+          <source media="(prefers-color-scheme: dark)" srcset="https://raw.giteeusercontent.com/wcdlan/dsh-qiniu-usage/raw/main/img/details-model.png">
+          <img src="https://raw.giteeusercontent.com/wcdlan/dsh-qiniu-usage/raw/main/img/details-model-light.png" height="440" alt="详情 · 各模型用量">
         </picture>
         <br>
         <sub><b>详情 · 各模型用量</b><br>日期 / Key 筛选与逐模型输入 / 输出 / 合计</sub>
@@ -37,8 +37,8 @@
       <td width="28">&nbsp;</td>
       <td align="center" valign="top">
         <picture>
-          <source media="(prefers-color-scheme: dark)" srcset="./img/details-respack.png">
-          <img src="./img/details-respack-light.png" height="440" alt="详情 · 资源包利用">
+          <source media="(prefers-color-scheme: dark)" srcset="https://raw.giteeusercontent.com/wcdlan/dsh-qiniu-usage/raw/main/img/details-respack.png">
+          <img src="https://raw.giteeusercontent.com/wcdlan/dsh-qiniu-usage/raw/main/img/details-respack-light.png" height="440" alt="详情 · 资源包利用">
         </picture>
         <br>
         <sub><b>详情 · 资源包利用</b><br>当月口径利用率与逐包明细</sub>
@@ -49,8 +49,8 @@
 
 <div align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./img/sidebar-card.png">
-    <img src="./img/sidebar-card-light.png" width="400" alt="侧栏速览卡片">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.giteeusercontent.com/wcdlan/dsh-qiniu-usage/raw/main/img/sidebar-card.png">
+    <img src="https://raw.giteeusercontent.com/wcdlan/dsh-qiniu-usage/raw/main/img/sidebar-card-light.png" width="400" alt="侧栏速览卡片">
   </picture>
   <br>
   <sub><b>侧栏速览卡片</b> · 收起时一行，展开给用量最大的 3 个模型与

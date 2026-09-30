@@ -19,8 +19,8 @@ follows the host theme.
 
 <div align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./img/settings.png">
-    <img src="./img/settings-light.png" width="520" alt="Settings → 七牛云用量">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.giteeusercontent.com/wcdlan/dsh-qiniu-usage/raw/main/img/settings.png">
+    <img src="https://raw.giteeusercontent.com/wcdlan/dsh-qiniu-usage/raw/main/img/settings-light.png" width="520" alt="Settings → 七牛云用量">
   </picture>
   <br>
   <sub><b>Settings → 七牛云用量</b> · credentials, key roster, auto-refresh</sub>
@@ -31,8 +31,8 @@ follows the host theme.
     <tr>
       <td align="center" valign="top">
         <picture>
-          <source media="(prefers-color-scheme: dark)" srcset="./img/details-model.png">
-          <img src="./img/details-model-light.png" height="440" alt="Details · model usage">
+          <source media="(prefers-color-scheme: dark)" srcset="https://raw.giteeusercontent.com/wcdlan/dsh-qiniu-usage/raw/main/img/details-model.png">
+          <img src="https://raw.giteeusercontent.com/wcdlan/dsh-qiniu-usage/raw/main/img/details-model-light.png" height="440" alt="Details · model usage">
         </picture>
         <br>
         <sub><b>Details · model usage</b><br>date / key filters, per-model input / output / total</sub>
@@ -40,8 +40,8 @@ follows the host theme.
       <td width="28">&nbsp;</td>
       <td align="center" valign="top">
         <picture>
-          <source media="(prefers-color-scheme: dark)" srcset="./img/details-respack.png">
-          <img src="./img/details-respack-light.png" height="440" alt="Details · resource packs">
+          <source media="(prefers-color-scheme: dark)" srcset="https://raw.giteeusercontent.com/wcdlan/dsh-qiniu-usage/raw/main/img/details-respack.png">
+          <img src="https://raw.giteeusercontent.com/wcdlan/dsh-qiniu-usage/raw/main/img/details-respack-light.png" height="440" alt="Details · resource packs">
         </picture>
         <br>
         <sub><b>Details · resource packs</b><br>month-to-date utilisation, per-pack detail</sub>
@@ -52,8 +52,8 @@ follows the host theme.
 
 <div align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./img/sidebar-card.png">
-    <img src="./img/sidebar-card-light.png" width="400" alt="Sidebar glance card">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.giteeusercontent.com/wcdlan/dsh-qiniu-usage/raw/main/img/sidebar-card.png">
+    <img src="https://raw.giteeusercontent.com/wcdlan/dsh-qiniu-usage/raw/main/img/sidebar-card-light.png" width="400" alt="Sidebar glance card">
   </picture>
   <br>
   <sub><b>Sidebar glance card</b> · one line collapsed, the three largest models plus
