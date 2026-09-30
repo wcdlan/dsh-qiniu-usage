@@ -1,34 +1,22 @@
 /**
- * 构建选项 —— `scripts/build.mjs` 与 `test/client-graph.test.ts` 共用。
- *
- * 抽出来的唯一目的是**避免两处漂移**：如果测试自己再写一份 esbuild 配置，那
- * 构建脚本改坏了（比如把 `platform` 从 `browser` 改成 `node`），测试仍会
- * 通过，回归就会重新漏出去。测试必须用**真实构建用的同一份选项**。
+ * 构建选项 —— `scripts/build.mjs` 与 `test/client-graph.test.ts` 共用，避免两处漂移：
+ * 测试若另写一份 esbuild 配置，脚本改坏（如 `platform` 改成 `node`）也测不出来。
  *
  * @module dsh-qiniu-usage/scripts/build-options
  */
 
-import { resolve } from 'node:path'
+import {resolve} from 'node:path'
 
 /** 包名：与 package.json 的 name 一致，也是 ModuleLoader 的注册 id。 */
 export const PACKAGE_NAME = 'dsh-qiniu-usage'
 
-/**
- * 浏览器冻结模块表里可用的外部模块。
- *
- * 宿主只提供 `react`；`react-dom` / `react-dom/client` 见于参考产物的用法，
- * 一并放行（早期一次 `意外的外部模块请求：react-dom/client` 就是漏了它）。
- */
+/** 浏览器冻结模块表可用的外部模块：宿主只保证 `react`，`react-dom` 系列照参考产物一并放行。 */
 export const CLIENT_EXTERNALS = ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client']
 
 /**
- * 宿主半区构建选项：自包含 ESM，对照参考产物确认过不含外部 `require`。
+ * 宿主半区构建选项：自包含 ESM，`external: []`。`@returns` 标注是必要的 ——
+ * 测试用 `allowJs` 纳入本文件，不标注 `format` 会被推成 `string` 而非 `'esm'` 字面量。
  *
- * JSDoc 里写明 `BuildOptions` 是必要的：测试用 `allowJs` 把本文件纳入了 TS
- * 程序，若不标注，TS 会把 `format` 推成 `string` 而不是 `'esm'` 字面量，
- * `build(...)` 调用处就会报类型不兼容。
- *
- * @param {string} root - 仓库根目录。
  * @returns {import('esbuild').BuildOptions} esbuild 构建选项。
  */
 export function hostBuildOptions(root) {
@@ -46,11 +34,9 @@ export function hostBuildOptions(root) {
 }
 
 /**
- * 客户端半区构建选项：浏览器 CJS + ModuleLoader 外壳，只留 react 系列 external。
+ * 客户端半区构建选项：浏览器 CJS + ModuleLoader 外壳，只留 react 系列 external；
+ * `write: false` —— 产物交给 {@link wrapClientBundle} 套壳后再落盘。
  *
- * `write: false` —— 产物要交给 {@link wrapClientBundle} 套壳后再落盘。
- *
- * @param {string} root - 仓库根目录。
  * @returns {import('esbuild').BuildOptions} esbuild 构建选项。
  */
 export function clientBuildOptions(root) {
@@ -69,18 +55,13 @@ export function clientBuildOptions(root) {
 }
 
 /**
- * 套上 ModuleLoader 外壳。
- *
- * `Object.defineProperty` 必须在内层产物**之前** —— 内层开头就会
- * `require("react")`，而 defineProperty 决定 exports 是否被识别为模块。
- *
- * @param {string} inner - esbuild 产出的 CJS 代码。
- * @returns {string} 可直接被浏览器执行的 bundle 源码。
+ * 套上 ModuleLoader 外壳。`Object.defineProperty` 必须在内层产物**之前** —— 内层开头
+ * 就会 `require("react")`，而它决定 exports 是否被识别为模块。
  */
 export function wrapClientBundle(inner) {
   // 内层产物自带 sourceMappingURL 注释，挪到最外层以免指向错位。
   const withoutMap = inner.replace(/\n?\/\/# sourceMappingURL=.*(\n|$)/, '\n')
-  // esbuild 用两空格缩进，这里统一转成两制表符，保持产物可读且与参考产物风格一致。
+    // esbuild 用两空格缩进，这里统一转成两制表符，与参考产物风格一致。
   const indented = withoutMap
     .split('\n')
     .map((line) => {

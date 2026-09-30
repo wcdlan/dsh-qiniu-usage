@@ -1,32 +1,14 @@
-/**
- * 侧栏速览卡片的**挂载**测试（真实 DOM）。
- *
- * 这个文件存在的理由和 `host-boot.test.ts` 一样：接线类的错误（挂到哪里、重复挂、
- * 卸载有没有清干净、被 shell 重渲染挤掉后能不能自己回来）只有真的执行一遍才发现得了。
- *
- * 用的是真 `react-dom/client` + jsdom，`ctx` 是替身；侧栏本身用一段最小 DOM 模拟
- * —— 选择器只看 `[class*=sidebarCol]` / `[class*=footArea]` / `[class*=settingsArea]`
- * 这些子串，因此不必复刻宿主真实的哈希类名。
- *
- * @vitest-environment jsdom
- * @module dsh-qiniu-usage/test/client-mount
- */
+// @vitest-environment jsdom
+// 选择器只看 [class*=sidebarCol]/[class*=footArea]/[class*=settingsArea] 子串，故用最小 DOM 模拟即可，不必复刻哈希类名。
 
-import { strict as assert } from 'node:assert'
-import { afterEach, describe, it } from 'vitest'
-import { apply } from '../src/client/index.ts'
-import {
-  SIDEBAR_CARD_ATTR,
-  SIDEBAR_CARD_SELECTOR,
-} from '../src/client/sidebar-mount.tsx'
-import { CARD_EXPANDED_KEY } from '../src/client/card-prefs.ts'
+import {strict as assert} from 'node:assert'
+import {afterEach, describe, it} from 'vitest'
+import {apply} from '../src/client/index.ts'
+import {SIDEBAR_CARD_ATTR, SIDEBAR_CARD_SELECTOR,} from '../src/client/sidebar-mount.tsx'
+import {CARD_EXPANDED_KEY} from '../src/client/card-prefs.ts'
 
-/**
- * 本用例注册过的所有 effect 清理函数。
- *
- * **必须逐个卸载**：插件的挂载 effect 里含 body 级 MutationObserver，不拆就会
- * 在后面的用例里继续把旧容器往新侧栏里塞（表现为"凭空多出好几个卡片"）。
- */
+// 本用例注册过的所有 effect 清理函数。必须逐个卸载：挂载 effect 含 body 级
+// MutationObserver，不拆会在后续用例继续把旧容器往新侧栏里塞（表现为凭空多出卡片）。
 let activeEffects: (() => void)[] = []
 
 /** 造一个最小可用的客户端 ctx 替身。 */
@@ -124,11 +106,7 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1_500): Promise<voi
   throw new Error('等待超时')
 }
 
-/**
- * 铺一段最小的侧栏 DOM：regionArea（会话列表）+ footArea（footerActions + settingsArea）。
- *
- * @returns 关键节点，便于断言落位。
- */
+// 铺一段最小的侧栏 DOM：regionArea + footArea（footerActions + settingsArea）。
 function installSidebar(): { column: HTMLElement; foot: HTMLElement; settings: HTMLElement } {
   document.body.replaceChildren()
   const column = document.createElement('div')
@@ -173,12 +151,7 @@ function click(target: Element): void {
   target.dispatchEvent(new MouseEvent('click', { bubbles: true }))
 }
 
-/**
- * 把 footArea 的子节点翻译成可读的身份证，用来断言顺序是否稳定。
- *
- * @param foot - 侧栏底部区域。
- * @returns 形如 `['actions', 'ours', 'rival', 'settings']` 的数组。
- */
+// 把 footArea 的子节点翻译成可读身份证（如 ['actions','ours','rival','settings']），用来断言顺序是否稳定。
 function footOrder(foot: HTMLElement): string[] {
   return Array.from(foot.children).map((child) => {
     if (child.hasAttribute(SIDEBAR_CARD_ATTR)) return 'ours'
@@ -210,13 +183,11 @@ function detailButton(): HTMLElement {
 }
 
 afterEach(() => {
-  // 先拆插件（断开观察者、卸载 React root），再清 DOM —— 反过来的话，
-  // 还活着的观察者会在下一个用例里把旧容器搬进新侧栏。
+    // 先拆插件（断开观察者、卸载 React root）再清 DOM：反过来的话，还活着的观察者会把旧容器搬进新侧栏。
   for (const dispose of activeEffects.splice(0)) {
     try {
       dispose()
     } catch {
-      // fiber 已销毁。
     }
   }
   document.body.replaceChildren()
@@ -239,7 +210,6 @@ describe('侧栏卡片 · 挂载与落位', () => {
 
   it('侧栏晚于插件出现时，观察者会把它接上', async () => {
     const { column, foot } = installSidebar()
-    // 先把整根侧栏摘掉，模拟"插件先激活、shell 后渲染"。
     document.body.replaceChildren()
     const { ctx } = makeCtx()
     apply(ctx as never)
@@ -257,13 +227,11 @@ describe('侧栏卡片 · 挂载与落位', () => {
     apply(ctx as never)
     await waitFor(() => card().nextElementSibling === settings)
 
-    // 模拟 shell 重建 footArea 的子树：把容器丢到一边。
     const detached = card()
     detached.remove()
     assert.equal(cards().length, 0, '前置条件：容器确实离开了 DOM')
     foot.append(detached)
 
-    // 放回尾部也算"位置不对"：观察者应把它挪回 Settings 之前。
     await waitFor(() => card().nextElementSibling === settings)
     assert.equal(card().parentElement, foot)
   })
@@ -271,8 +239,7 @@ describe('侧栏卡片 · 挂载与落位', () => {
   it('与另一张"紧邻 Settings"的卡片共存时不会每帧互推（否则点击会被吞掉）', async () => {
     const { foot, settings } = installSidebar()
 
-    // 竞争者：复刻 @linxin666/dsh-usage 的用量卡落位逻辑 —— 只要自己不是紧邻
-    // Settings 就把自己挪过去。它和我们抢同一个位置。
+      // 竞争者：复刻 @linxin666/dsh-usage 的落位逻辑（只要自己不紧邻 Settings 就挪过去），它和我们抢同一个位置。
     const rival = document.createElement('div')
     rival.setAttribute('data-test-rival', '')
     const rivalPlace = (): void => {
@@ -293,15 +260,13 @@ describe('侧栏卡片 · 挂载与落位', () => {
     apply(ctx as never)
     await waitFor(() => cards().length === 1)
 
-    // 关键不是"某一瞬间的顺序"—— 互推时每一帧结束都会回到同一个顺序，
-    // 所以只能**数 footArea 的结构变化**：稳定后应当一动不动。
+      // 关键不是"某一瞬间的顺序"：互推时每帧结束都回到同一顺序，只能数 footArea 的结构变化，稳定后应一动不动。
     let moves = 0
     const watcher = new MutationObserver((records) => {
       moves += records.length
     })
     watcher.observe(foot, { childList: true })
 
-    // 先让首轮落位（我们 + 竞争者）跑完，再开始数。
     await new Promise((resolve) => setTimeout(resolve, 60))
     moves = 0
     await new Promise((resolve) => setTimeout(resolve, 120))
@@ -320,7 +285,6 @@ describe('侧栏卡片 · 挂载与落位', () => {
     apply(ctx as never)
     await waitFor(() => cards().length === 1)
 
-    // 模拟上一个 bundle 实例留下的容器，以及旧版悬浮按钮的宿主级容器
     const stale = document.createElement('div')
     stale.setAttribute(SIDEBAR_CARD_ATTR, '')
     document.body.append(stale)

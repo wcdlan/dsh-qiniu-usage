@@ -1,28 +1,16 @@
 /**
- * 真实账号联调脚本。
+ * 真实账号联调脚本。凭据只从环境变量读，**永不写入仓库**；所有 Key/凭据输出均已脱敏。
  *
- * 凭据只从环境变量读，**永不写入仓库**；输出里所有 Key/凭据都已脱敏。
- *
- * ```bash
- * export QINIU_ACCESS_KEY=...
- * export QINIU_SECRET_KEY=...
- * node scripts/smoke.mjs                       # 默认查昨天
- * node scripts/smoke.mjs --day today
- * node scripts/smoke.mjs --day 2026-01-01 --key 我的测试Key
- * node scripts/smoke.mjs --json                # 输出原始载荷
- * ```
- *
- * 这个脚本 import 的是 `src/` 下的 TS 源码 —— Node 24 原生支持直接运行 TS，
- * 因此不依赖构建产物（但 `lib/` 存在时也没问题）。
+ * 直接 import `src/` 下的 TS 源码（Node 24 原生运行 TS），不依赖构建产物。
+ * 用法见 `--help` 与 README「开发」。退出码：0 成功 / 1 上游返回 ok=false / 2 用法或环境变量错误。
  *
  * @module dsh-qiniu-usage/scripts/smoke
  */
 
-import { CredentialAccess } from '../src/credentials.ts'
-import { resolveConfig } from '../src/config.ts'
-import { QiniuUsageService } from '../src/service.ts'
+import {CredentialAccess} from '../src/credentials.ts'
+import {resolveConfig} from '../src/config.ts'
+import {QiniuUsageService} from '../src/service.ts'
 
-/** 解析简单的位置无关参数。 */
 function parseArgs(argv) {
   const args = { day: 'yesterday', key: '', json: false }
   for (let index = 0; index < argv.length; index += 1) {
@@ -35,7 +23,6 @@ function parseArgs(argv) {
   return args
 }
 
-/** Token 数量的紧凑显示。 */
 function fmt(value) {
   if (!Number.isFinite(value)) return '0'
   if (Math.abs(value) >= 1e6) return `${Number((value / 1e6).toFixed(2))}M`

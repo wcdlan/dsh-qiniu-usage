@@ -1,41 +1,16 @@
-/**
- * 宿主装载测试：用真 cordis Context 实际 apply 一次插件。
- *
- * 这个文件的存在理由是**一次真实事故**：`src/index.ts` 曾经导出 `export default apply`，
- * loader 的 `unwrapExports` 优先取 `default`，于是拿到一个裸函数、丢掉模块命名空间的
- * `inject`，`dsh web` 启动期直接抛：
- *
- * ```
- * Error: dsh: plugin tree failed to load: … cannot get property "webServer" without inject
- * ```
- *
- * 单测与产物契约测试当时全绿也没拦住它 —— 因为它们只检查"模块导出了什么"，
- * 没有走 **cordis 的 inject 解析 + 应用** 这条路。所以这里补齐：
- * 提供 `webServer` 桩服务 → 应用插件 → 断言路由真的注册上了。
- *
- * @module dsh-qiniu-usage/test/host-boot
- */
-
-import { strict as assert } from 'node:assert'
-import { existsSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { afterEach, describe, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
+import {strict as assert} from 'node:assert'
+import {existsSync} from 'node:fs'
+import {dirname, resolve} from 'node:path'
+import {fileURLToPath} from 'node:url'
+import {afterEach, describe, it} from 'vitest'
+import {Context} from '@deepseek-ai/cordis'
+import type {WebRoute} from '@deepseek-ai/dsh-host-webserver'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const HOST_BUNDLE = resolve(root, 'lib/index.js')
 
-/**
- * 复刻 cordis-plugin-loader 的 `unwrapExports`。
- *
- * 真实实现在 `cordis-plugin-loader/lib/index.js`：`exports = exports.default ?? exports`，
- * 再在 `__esModule` 时再剥一层。
- *
- * @param exports - 模块命名空间。
- * @returns loader 实际会拿去当插件的值。
- */
+// 复刻 cordis-plugin-loader 的 unwrapExports：`exports.default ?? exports`，再在 __esModule 时剥一层。
+// 真事故：src/index.ts 曾导出 default，loader 取到裸函数、丢掉 inject，dsh web 启动即崩。
 function unwrapExports(exports: unknown): unknown {
   if (exports === null || exports === undefined) return exports
   let value = (exports as { default?: unknown }).default ?? exports
@@ -94,17 +69,11 @@ afterEach(() => {
     try {
       fiber?.dispose()
     } catch {
-      // 已经处理过。
     }
   }
 })
 
-/**
- * 造一个装好桩服务的 Context，并按 loader 的方式应用本插件。
- *
- * @param config - 插件配置。
- * @returns Context、桩与注册到的路由。
- */
+// 造一个装好 webServer 桩的 Context，并按 loader 的方式应用本插件。
 async function bootPlugin(config: Record<string, unknown> = {}): Promise<{
   ctx: Context
   routes: WebRoute[]
@@ -127,7 +96,6 @@ async function bootPlugin(config: Record<string, unknown> = {}): Promise<{
   const fiber = ctx.plugin(plugin as unknown as Parameters<Context['plugin']>[0], config as never)
   mounted.push(fiber as unknown as { dispose(): unknown })
 
-  // 让 effect / inject 回调有机会跑完。
   await new Promise((resolve) => setTimeout(resolve, 20))
 
   return { ctx, routes: stub.routes }

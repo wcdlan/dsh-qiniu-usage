@@ -1,25 +1,9 @@
-/**
- * 面板样式。
- *
- * 两条硬约束（来自设计文档 §9.3）：
- *
- * 1. **只用宿主主题 token**（`--dsw-alias-*`），不引 UI 库、不引 Tailwind，
- *    保持与现有设置页一致。因此不做自定义字体/配色/图像。
- * 2. 宿主 token 缺失时每个变量都带兜底值，退化为可读的默认色而不是全白/全黑。
- *
- * 为什么用 CSS 类而不是内联样式：`hover` / `active` / `focus-visible` 与过渡
- * 无法用内联样式表达，而焦点环是无障碍要求（不能省）。所有类名以 `dsh-qiniu-`
- * 前缀隔离，避免与宿主样式碰撞。
- *
- * 间距节奏统一走 4px 基准：2 / 4 / 6 / 8 / 10 / 12 / 14 / 16 / 18 / 20。
- *
- * @module dsh-qiniu-usage/client/styles
- */
+// 硬约束（设计文档 §9.3）：只用宿主主题 token（--dsw-alias-*），且每个变量带兜底值，
+// 缺 token 时退化为可读默认色而非全白/全黑。
+// 用 CSS 类而非内联样式：hover/active/focus-visible 与过渡内联表达不了，焦点环是无障碍要求。
 
-/** 类名前缀（也是 keyframes 前缀）。 */
 const NS = 'dsh-qiniu'
 
-/** 组件里用到的类名常量（避免字符串散落各处）。 */
 export const cls = {
   panel: `${NS}-panel`,
   head: `${NS}-head`,
@@ -132,16 +116,10 @@ export const cls = {
   dialogFoot: `${NS}-dialog-foot`,
 } as const
 
-/** 主题 token 的简写读取（每个都带兜底值）。 */
+// 主题 token 简写读取（带兜底值）。
 const v = (name: string, fallback: string): string => `var(--dsw-alias-${name}, ${fallback})`
 
-/**
- * 面板全部样式（**注入 DOM 前先剥掉注释**）。
- *
- * 注释只服务于源码阅读：它们会随 `<style>` 进入 DOM，既白占字节，又会让
- * "界面上有没有这段文案"这类断言被注释里的词误伤（真踩过：「详情」只出现在
- * 注释里，却让"收起态不该有详情按钮"的用例红了）。
- */
+/** 面板全部样式（注入 DOM 前先剥掉注释，避免注释里的词误伤"界面上有没有这段文案"的断言）。 */
 const RAW_CSS = `
 .${cls.panel} {
   display: flex;
@@ -152,7 +130,7 @@ const RAW_CSS = `
   color: ${v('label-primary', 'inherit')};
 }
 
-/* ── 面板头 ─────────────────────────────────────────── */
+/* 面板头 */
 .${cls.head} { display: flex; flex-direction: column; gap: 3px; }
 .${cls.title} { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: .01em; }
 .${cls.subtitle} {
@@ -161,7 +139,7 @@ const RAW_CSS = `
   text-wrap: pretty;
 }
 
-/* ── 工具条 ─────────────────────────────────────────── */
+/* 工具条 */
 .${cls.toolbar} { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .${cls.field} { display: inline-flex; align-items: center; gap: 6px; }
 .${cls.label} { font-size: 11.5px; color: ${v('label-tertiary', 'rgba(128,128,128,.9)')}; }
@@ -215,7 +193,7 @@ const RAW_CSS = `
 }
 .${cls.btnGhost}:hover:not(:disabled) { background: ${v('interactive-bg-hover', 'rgba(128,128,128,.14)')}; }
 
-/* ── 卡片 ───────────────────────────────────────────── */
+/* 卡片 */
 .${cls.card} {
   display: flex;
   flex-direction: column;
@@ -237,7 +215,7 @@ const RAW_CSS = `
 .${cls.subheadTitle} { font-size: 12px; font-weight: 600; color: ${v('label-secondary', 'rgba(128,128,128,.95)')}; }
 .${cls.muted} { color: ${v('label-tertiary', 'rgba(128,128,128,.9)')}; }
 
-/* ── 徽标 ───────────────────────────────────────────── */
+/* 徽标 */
 .${cls.badge} {
   display: inline-flex;
   align-items: center;
@@ -262,11 +240,9 @@ const RAW_CSS = `
   color: ${v('label-secondary', 'rgba(128,128,128,.95)')};
 }
 
-/* ── 用量表：CSS Grid 定列，数字右对齐且等宽 ───────────── */
+/* 用量表：CSS Grid 定列，数字右对齐且等宽 */
 .${cls.table} { display: flex; flex-direction: column; }
-/* 4 列：名字（内含占比条）| 输入 | 输出 | 合计。
-   面板内容宽约 548px，5 列会把模型名挤到必须省略 —— 名字是主标识，优先保它。
-   占比条移到名字下方，既省一列又让"条属于哪个模型"一目了然。 */
+/* 4 列：名字（内含占比条）| 输入 | 输出 | 合计。名字是主标识，优先保其宽度。 */
 .${cls.tableHead},
 .${cls.row} {
   display: grid;
@@ -288,7 +264,6 @@ const RAW_CSS = `
 }
 .${cls.row}:last-child { border-bottom: none; padding-bottom: 2px; }
 
-/* 名字 + 占比条堆叠；名字是主标识，绝不为次要信息让位而被截断 */
 .${cls.model} { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .${cls.modelName} {
   font-size: 12.5px;
@@ -298,7 +273,6 @@ const RAW_CSS = `
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 行内占比条：贴在名字下方，宽度随名字列自适应 */
 .${cls.modelBar} { height: 4px; border-radius: 999px; background: ${v('bg-layer-3', 'rgba(128,128,128,.16)')}; overflow: hidden; }
 .${cls.modelBarFill} { height: 100%; border-radius: 999px; transition: width .2s ease; }
 
@@ -310,7 +284,6 @@ const RAW_CSS = `
 }
 .${cls.numStrong} { font-weight: 600; }
 
-/* 条形图：固定宽度列，不再是撑满剩余空间的"浮岛" */
 .${cls.bar} {
   height: 6px;
   border-radius: 999px;
@@ -319,14 +292,13 @@ const RAW_CSS = `
 }
 .${cls.barFill} { height: 100%; border-radius: 999px; transition: width .2s ease; }
 
-/* ── 资源包：当月口径 ───────────────────────────────── */
+/* 资源包：当月口径 */
 .${cls.items} { display: flex; flex-direction: column; gap: 16px; }
 .${cls.item} { display: flex; flex-direction: column; gap: 5px; }
 .${cls.itemHead} { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .${cls.itemName} { font-size: 12.5px; font-weight: 500; min-width: 0; text-wrap: pretty; }
 
-/* ── 资源包：逐包。行间加分隔线，避免条形图像是"串"到下一个包 */
-/* 逐包区块：与上方"当月口径"之间加分隔线，强调口径不同（设计文档 §3.3 的提醒） */
+/* 资源包：逐包。与上方「当月口径」加分隔线强调口径不同（设计文档 §3.3）。 */
 .${cls.packsGroup} {
   display: flex;
   flex-direction: column;
@@ -368,7 +340,7 @@ const RAW_CSS = `
   font-variant-numeric: tabular-nums;
 }
 
-/* ── 提示条 / 空状态 / 骨架 ─────────────────────────── */
+/* 提示条 / 空状态 / 骨架 */
 .${cls.callout} {
   display: flex;
   flex-direction: column;
@@ -409,7 +381,7 @@ const RAW_CSS = `
   animation: ${NS}-pulse 1.2s ease-in-out infinite;
 }
 
-/* ── 凭据：键名只读 + 值输入框两层 ──────────────────── */
+/* 凭据：键名只读 + 值输入框两层 */
 .${cls.credRow} { display: flex; flex-direction: column; gap: 6px; }
 .${cls.credHead} { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .${cls.credName} { font-size: 12.5px; font-weight: 500; }
@@ -433,7 +405,7 @@ const RAW_CSS = `
 .${cls.input}:focus-visible { outline: 2px solid ${v('brand-primary', '#4c8dff')}; outline-offset: 1px; }
 .${cls.input}:disabled { opacity: .55; cursor: default; }
 
-/* ── 下钻明细 ───────────────────────────────────────── */
+/* 下钻明细 */
 .${cls.detail} { padding: 2px 0 4px; }
 .${cls.detailTable} { width: 100%; border-collapse: collapse; font-size: 11.5px; }
 .${cls.detailTable} th {
@@ -447,10 +419,10 @@ const RAW_CSS = `
 .${cls.detailTable} td:last-child { text-align: right; padding-right: 0; }
 .${cls.detailTable} td:last-child { font-variant-numeric: tabular-nums; }
 
-/* ── 告警清单 ───────────────────────────────────────── */
+/* 告警清单 */
 .${cls.warnList} { display: flex; flex-direction: column; gap: 3px; }
 
-/* ── 设置页里的表单行 ───────────────────────────────── */
+/* 设置页里的表单行 */
 .${cls.formRow} {
   display: flex;
   align-items: center;
@@ -469,8 +441,7 @@ const RAW_CSS = `
   border-radius: 8px;
 }
 .${cls.keyRow} {
-  /* 行是 div（数据行不再可点）—— 少了这条，width:100% 会把 20px 内边距加到外面，
-     第三列被容器裁掉。按钮时代没事是因为 UA 样式默认给了 border-box。 */
+  /* 行是 div：不显式 border-box，width:100% 会把内边距加到外面，第三列被容器裁掉。 */
   box-sizing: border-box;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
@@ -491,7 +462,6 @@ const RAW_CSS = `
 .${cls.keyRow}:hover { background: ${v('interactive-bg-hover', 'rgba(128,128,128,.14)')}; }
 .${cls.keyRow}:focus-visible { outline: 2px solid ${v('brand-primary', '#4c8dff')}; outline-offset: -2px; }
 .${cls.keyRowActive} { background: color-mix(in srgb, currentColor 8%, transparent); font-weight: 600; }
-/* 表头：不可点、略微压暗，与数据行区分开。 */
 .${cls.keyHead} { cursor: default; opacity: .6; font-size: 10.5px; }
 .${cls.keyHead}:hover { background: transparent; }
 .${cls.keyCell} { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -530,14 +500,10 @@ const RAW_CSS = `
 .${cls.tab}:focus-visible { outline: 2px solid ${v('brand-primary', '#4c8dff')}; outline-offset: -2px; }
 .${cls.tabActive} { opacity: 1; font-weight: 600; border-bottom-color: ${v('brand-primary', '#4c8dff')}; }
 
-/* ── 侧栏卡片（左侧列表下方） ──────────────────────────
-   位置不是 slot 给的：sidebar.footer.action 是一条 flex 行（里面还坐着宿主
-   自己的 cordis-panel 按钮），放不下整块卡片，所以容器由 sidebar-mount.tsx
-   直接插进 shell 的 footArea（Settings 行之上）。样式形态对齐宿主自带的
-   「今日用量」速览卡：圆角 12、极淡底色、悬停加深，整块可点。
-
-   句法约定：.sideCard 是容器（position:relative），里面的 .sideCardMain 是
-   唯一的整块按钮，箭头 .sideToggle 是它的**兄弟**按钮 —— 按钮里不能套按钮。 */
+/* 侧栏卡片（左侧列表下方）。位置不是 slot 给的：容器由 sidebar-mount.tsx 直接插进
+   shell 的 footArea（Settings 行之上），样式形态对齐宿主自带的「今日用量」速览卡。
+   句法约定：.sideCard 是容器，.sideCardMain 是唯一的整块按钮，箭头 .sideToggle 是它的
+   兄弟按钮 —— 按钮里不能套按钮。 */
 .${cls.sideCard} {
   box-sizing: border-box;
   position: relative;
@@ -595,7 +561,6 @@ const RAW_CSS = `
 }
 .${cls.sideIcon} { flex: none; display: block; opacity: .65; }
 
-/* 展开态：标题行 + 模型缩略 + 动作行 */
 .${cls.sideHead} {
   display: flex;
   align-items: baseline;
@@ -667,9 +632,7 @@ const RAW_CSS = `
 .${cls.sideToggle}:focus-visible { outline: 2px solid ${v('brand-primary', '#4c8dff')}; outline-offset: 1px; }
 .${cls.sideToggle} svg { display: block; }
 
-/* ── 详情弹窗 ────────────────────────────────────────
-   从卡片上的「详情」按钮打开：定位用 fixed，因此挂在侧栏 DOM 里也照样铺满视口。
-   遮罩层吃掉点击（点空白关闭），弹窗本体是居中卡片。 */
+/* 详情弹窗：fixed 定位，因此挂在侧栏 DOM 里也照样铺满视口；遮罩层点空白关闭。 */
 .${cls.overlay} {
   position: fixed;
   inset: 0;
@@ -735,8 +698,7 @@ const RAW_CSS = `
   to { opacity: 1; }
 }
 
-/* 尊重"减少动态效果"：弹窗与弹层的入场动画直接关掉。顺带让静态截图能一次拍准
-   —— 动画未跑完时截图会拍到半透明的中间帧。 */
+/* 减少动态效果时关掉入场动画（顺带让静态截图不拍到半透明中间帧）。 */
 @media (prefers-reduced-motion: reduce) {
   .${cls.overlay},
   .${cls.dialog},
@@ -748,25 +710,14 @@ const RAW_CSS = `
 /** 去注释后的样式；注入 `<style>` 的就是它。 */
 export const PANEL_CSS = RAW_CSS.replace(/\/\*[\s\S]*?\*\//g, '')
 
-/**
- * 利用率条的颜色档位：≥90% 危险、≥75% 警告，其余用业务色。
- *
- * @param fraction - 0..1 的利用率。
- * @returns 颜色档位。
- */
+/** 利用率条颜色档位：≥90% danger、≥75% warn，其余 normal。 */
 export function barTone(fraction: number): 'normal' | 'warn' | 'danger' {
   if (fraction >= 0.9) return 'danger'
   if (fraction >= 0.75) return 'warn'
   return 'normal'
 }
 
-/**
- * 条形填充的内联样式（宽度是动态值，只能内联）。
- *
- * @param fraction - 0..1 的占比。
- * @param tone - 颜色档位。
- * @returns 内联样式对象。
- */
+/** 条形填充的内联样式（宽度是动态值，只能内联）。 */
 export function barFillStyle(
   fraction: number,
   tone: 'normal' | 'warn' | 'danger' = 'normal',

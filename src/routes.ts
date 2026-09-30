@@ -1,71 +1,40 @@
-/**
- * 宿主路由：loopback-fenced 的 JSON 接口。
- *
- * 设计文档 §7。三条硬要求：
- *
- * 1. 每个路由都先过 `isLoopbackRequest` —— 个人账号数据，只允许本机浏览器读。
- * 2. 响应一律 `cache-control: no-store`。
- * 3. **入参白名单校验**：`day` 只接受 `today` / `yesterday` / `YYYY-MM-DD`；
- *    `key` 只是本地筛选用的标签，但同样不让它把任意文本带进上游请求链路。
- *
- * @module dsh-qiniu-usage/routes
- */
+// 个人账号数据只允许本机浏览器读：所有路由先过 loopback 校验并置 no-store；见 DESIGN.md §7。
 
-import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
-import { isLoopbackRequest } from './host/loopback.ts'
-import { readJsonBody, writeJson } from './host/http.ts'
-import type { DaySelector, KeySelector, QiniuUsageService } from './service.ts'
-import { toSourceError } from './service.ts'
+import type {IncomingMessage, ServerResponse} from 'node:http'
+import type {WebRoute} from '@deepseek-ai/dsh-host-webserver'
+import {isLoopbackRequest} from './host/loopback.ts'
+import {readJsonBody, writeJson} from './host/http.ts'
+import type {DaySelector, KeySelector, QiniuUsageService} from './service.ts'
+import {toSourceError} from './service.ts'
 
-/** 本插件所有路由的前缀。 */
 export const API_PREFIX = '/api/dsh-qiniu-usage'
 
-/** 合法日期分隔形态：`YYYY-MM-DD`。 */
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
 
-/**
- * 校验并归一 `day` 参数。
- *
- * 只放行三个形态：`today`、`yesterday`、合法日期。其余（含路径穿越、超长串、
- * 上游 query 注入尝试）一律回落到 `today` —— 绝不把未经校验的字符串带进上游请求。
- *
- * @param raw - 原始参数值，可能为 `null`（未提供）。
- * @returns 归一后的日期口径。
- */
+/** 校验并归一 `day`；只放行 today/yesterday/合法日期，其余一律回落 today，绝不把未校验串带进上游。 */
 export function parseDayParam(raw: string | null | undefined): DaySelector {
   if (typeof raw !== 'string' || raw === '') return 'today'
   if (raw === 'today' || raw === 'yesterday') return raw
   if (ISO_DATE.test(raw)) {
-    // 再确认一次"看起来是真的日期"，例如拒绝 2026-13-45。
+      // 再确认是真实日期，例如拒绝 2026-13-45。
     const parsed = new Date(`${raw}T00:00:00Z`)
     if (!Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === raw) return raw
   }
   return 'today'
 }
 
-/**
- * 归一并截断 `key` 参数。
- *
- * 该值只用于本地筛选（比对上游返回的 `name` / 掩码 / `api_key`），不会拼进上游
- * query。仍做长度与字符约束，避免它经错误信息或界面回显时出现异常内容。
- *
- * @param raw - 原始参数值。
- * @returns 归一后的 Key 选择器；空串表示账号级汇总。
- */
+/** 归一并截断 `key`（≤128）；它只用于本地筛选、不进上游 query，仍限字符避免回显异常。 */
 export function parseKeyParam(raw: string | null | undefined): KeySelector {
   if (typeof raw !== 'string') return ''
-  // 去掉控制字符与首尾空白；长度上限 128 足够容纳名称与掩码。
   // eslint-disable-next-line no-control-regex
   return raw.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 128)
 }
 
-/** 从请求 URL 里只取 query 段，避免依赖 `Host` 之外的信息。 */
+// 用固定假 base 构造 URL，只取 path/query，不依赖 `Host`。
 function requestUrl(req: IncomingMessage): URL {
   return new URL(req.url ?? '/', 'http://localhost')
 }
 
-/** 统一的 fence + 方法校验前置；返回 `true` 表示可以继续处理。 */
 function guard(
   req: IncomingMessage,
   res: ServerResponse,
@@ -87,17 +56,11 @@ function guard(
   return true
 }
 
-/** 统一的 200 JSON 响应。 */
 function ok(res: ServerResponse, body: unknown): void {
   writeJson(res, 200, body, { 'cache-control': 'no-store' })
 }
 
-/**
- * `GET /overview?day=&key=` —— 面板主接口。
- *
- * @param service - 用量服务。
- * @returns 路由定义。
- */
+/** `GET /overview?day=&key=` —— 面板主接口。 */
 export function makeOverviewRoute(service: QiniuUsageService): WebRoute {
   return {
     kind: 'exact',
@@ -113,14 +76,7 @@ export function makeOverviewRoute(service: QiniuUsageService): WebRoute {
   }
 }
 
-/**
- * `POST /refresh` —— 失效缓存后重取。
- *
- * body 可选，字段与 `/overview` 的 query 相同。
- *
- * @param service - 用量服务。
- * @returns 路由定义。
- */
+/** `POST /refresh`；body 可选，字段与 `/overview` 的 query 相同。 */
 export function makeRefreshRoute(service: QiniuUsageService): WebRoute {
   return {
     kind: 'exact',
@@ -128,7 +84,7 @@ export function makeRefreshRoute(service: QiniuUsageService): WebRoute {
     handler: async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
       if (!guard(req, res, ['POST'])) return
 
-      // body 是可选增强：query 里给了就用 query，否则读 body。
+        // query 优先，其次读 body。
       const url = requestUrl(req)
       let dayRaw = url.searchParams.get('day')
       let keyRaw = url.searchParams.get('key')
@@ -146,12 +102,7 @@ export function makeRefreshRoute(service: QiniuUsageService): WebRoute {
   }
 }
 
-/**
- * `GET /keys?day=` —— Key 选择器候选集。
- *
- * @param service - 用量服务。
- * @returns 路由定义。
- */
+/** `GET /keys?day=` —— Key 选择器候选集。 */
 export function makeKeysRoute(service: QiniuUsageService): WebRoute {
   return {
     kind: 'exact',
@@ -165,18 +116,10 @@ export function makeKeysRoute(service: QiniuUsageService): WebRoute {
   }
 }
 
-/** `order_hash` 形态：十六进制/md5 类标识，限制长度与字符集。 */
+/** `order_hash` 形态：hex/md5 类标识，限长度与字符集。 */
 const ORDER_HASH = /^[A-Za-z0-9_-]{1,64}$/
 
-/**
- * `GET /respack/detail?order_hash=&po_id=` —— 单包下钻。
- *
- * 两个参数都必须来自 `respack/list` 的返回，因此这里只做形态校验；任何不合形态的
- * 值直接 400，不带上游 —— 避免把任意文本拼进签名请求的 query。
- *
- * @param service - 用量服务。
- * @returns 路由定义。
- */
+/** `GET /respack/detail`；参数须来自 `respack/list`，形态不合直接 400 不带上游，避免任意文本拼进签名 query。 */
 export function makeRespackDetailRoute(service: QiniuUsageService): WebRoute {
   return {
     kind: 'exact',
@@ -203,28 +146,14 @@ export function makeRespackDetailRoute(service: QiniuUsageService): WebRoute {
         const detail = await service.respackDetail(orderHash, poId)
         ok(res, { ok: true, detail })
       } catch (error) {
-        // 下钻失败只影响这一个面板，不抛给上层；错误形状与 /overview 的 errors 一致。
+          // 下钻失败只影响本面板，不抛给上层；错误形状与 /overview 的 errors 一致。
         ok(res, { ok: false, detail: null, error: toSourceError(error, 'respack') })
       }
     },
   }
 }
 
-/**
- * `/credentials` —— 凭据状态读取与写入。
- *
- * ⚠ **一个路径只能注册一条路由。** `WebRoute` 没有 method 字段，
- * `webServer.register()` 按 `(kind, path)` 唯一，重复注册会在启动期抛
- * `duplicate exact route`。方法分派必须写在 handler 内部 —— 与 `dsh-usage`
- * 的 refresh 路由同款做法。
- *
- * - `GET`  → 只回 `describe` 形状（`configured` / `source` / `writable`），永不返回值。
- * - `POST` → body `{ ref, action: 'set', value }` 或 `{ ref, action: 'unset' }`。
- *   `ref` 由 service 做白名单校验，因此这个接口**不能写任意路径**。
- *
- * @param service - 用量服务。
- * @returns 路由定义。
- */
+/** `/credentials`；`WebRoute` 无 method 字段故一路径只注册一条路由（重复会抛 duplicate exact route），方法分派写在 handler 内；`ref` 由 service 白名单校验，不能写任意路径。 */
 export function makeCredentialsRoute(service: QiniuUsageService): WebRoute {
   return {
     kind: 'exact',
@@ -241,7 +170,6 @@ export function makeCredentialsRoute(service: QiniuUsageService): WebRoute {
         return
       }
 
-      // POST：写入或清除。
       const contentType = req.headers['content-type'] ?? ''
       if (!contentType.includes('application/json')) {
         writeJson(
@@ -279,10 +207,10 @@ export function makeCredentialsRoute(service: QiniuUsageService): WebRoute {
         } else {
           await service.unsetCredential(ref)
         }
-        // 写成功后回传新的 describe 结果，UI 据此更新状态。
+          // 写成功后回传新的 describe 结果供 UI 更新。
         ok(res, { ok: true, credentials: await service.describeCredentials() })
       } catch (error) {
-        // 只读遮蔽、引用不在白名单、空值 —— 都是可预期失败，回传可读信息。
+          // 只读遮蔽、ref 不在白名单、空值均为可预期失败，回传可读信息。
         ok(res, {
           ok: false,
           error: toSourceError(error, 'usage'),
@@ -293,12 +221,7 @@ export function makeCredentialsRoute(service: QiniuUsageService): WebRoute {
   }
 }
 
-/**
- * 本插件当前注册的全部路由。
- *
- * @param service - 用量服务。
- * @returns 路由数组。
- */
+/** 本插件当前注册的全部路由。 */
 export function makeRoutes(service: QiniuUsageService): WebRoute[] {
   return [
     makeOverviewRoute(service),

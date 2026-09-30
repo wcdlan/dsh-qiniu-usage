@@ -1,28 +1,13 @@
-/**
- * 展示层格式化：Token 数量、比率、时间。
- *
- * 纯函数，单独可测 —— UI 里最容易出错的"数量级/单位/边界"都集中在这里。
- *
- * @module dsh-qiniu-usage/client/format
- */
+// 展示层格式化：Token 数量、比率、时间。纯函数，单独可测。
 
-import { parseUnit } from '../qiniu/usage.ts'
+import {parseUnit} from '../qiniu/usage.ts'
 
-/** SI 千分进位。 */
 const SI_UNITS = [
   { limit: 1e9, suffix: 'B', divisor: 1e9 },
   { limit: 1e6, suffix: 'M', divisor: 1e6 },
   { limit: 1e3, suffix: 'K', divisor: 1e3 },
 ] as const
 
-/**
- * 把 Token 数量格式化为紧凑形式（K/M/B），保留两位有效小数。
- *
- * 不足 1000 时原样显示整数。`undefined` / 非有限值返回 `0`。
- *
- * @param value - Token 数量。
- * @returns 紧凑字符串，例如 `2.08M`。
- */
 export function formatTokens(value: number | undefined): string {
   if (value === undefined || !Number.isFinite(value)) return '0'
   const absolute = Math.abs(value)
@@ -36,26 +21,12 @@ export function formatTokens(value: number | undefined): string {
   return String(Math.round(value))
 }
 
-/**
- * 把 0..1 的比率格式化为百分比整数。
- *
- * @param value - 比率。
- * @returns 百分比字符串，例如 `68%`。
- */
 export function formatPercent(value: number | undefined): string {
   if (value === undefined || !Number.isFinite(value)) return '0%'
   return `${Math.round(value * 100)}%`
 }
 
-/**
- * 按东八区把时间戳格式化为 `HH:MM:SS`。
- *
- * 面板显示的是七牛口径的时间（东八区），因此不跟随浏览器时区，
- * 避免用户看到与官方控制台不一致的时刻。
- *
- * @param timestampMs - 毫秒时间戳。
- * @returns `HH:MM:SS`；无法解析时为空串。
- */
+// 面板显示七牛口径的时间（东八区），不跟随浏览器时区，避免与官方控制台不一致。
 export function formatClock(timestampMs: number | null | undefined): string {
   if (timestampMs === null || timestampMs === undefined || !Number.isFinite(timestampMs)) return ''
   const shifted = new Date(timestampMs + 8 * 3600 * 1000)
@@ -65,12 +36,6 @@ export function formatClock(timestampMs: number | null | undefined): string {
   return `${hh}:${mm}:${ss}`
 }
 
-/**
- * 把 ISO 时间文本格式化为东八区的 `MM-DD`。
- *
- * @param iso - ISO 时间文本（通常带 `+08:00`）。
- * @returns `MM-DD`；无法解析时原样返回。
- */
 export function formatMonthDay(iso: string | undefined): string {
   if (iso === undefined || iso === '') return ''
   const parsed = Date.parse(iso)
@@ -81,18 +46,9 @@ export function formatMonthDay(iso: string | undefined): string {
   return `${month}-${day}`
 }
 
-/**
- * 把数值与其单位换算为"数值文本 + 单位标签"。
- *
- * **关键修正**：上游的资源包单位本身可能自带量级（例如 `kTokens`）。此时若再叠加
- * SI 紧凑表示，会得到 `75.14K kTokens` 这种**两套量级叠在一起**的写法 —— 实际值是
- * 75,140 kTokens = 75.14M tokens，用户极易读错数量级。所以单位自带量级时先换算成
- * 基础单位（tokens），标签也只留一次。
- *
- * @param value - 数值（以 `unit` 为单位）。
- * @param unit - 上游给出的单位原文。
- * @returns `{ text, unitLabel }`，例如 `{ text: '75.14M', unitLabel: 'tokens' }`。
- */
+// 上游的资源包单位可能自带量级（如 `kTokens`），再叠加 SI 紧凑表示会得到
+// `75.14K kTokens` 这种两套量级叠加的写法，用户极易读错数量级 —— 所以先换算成基础
+// 单位（tokens），标签只留一次。
 export function convertAmount(
   value: number | undefined,
   unit: string,
@@ -108,26 +64,11 @@ export function convertAmount(
   return { text: formatTokens((value ?? 0) * parsed.factor), unitLabel: parsed.label }
 }
 
-/**
- * 把数值格式化为带单位的分段用量，用于资源包行。
- *
- * @param value - 数值。
- * @param unit - 单位（如 `GB`、`kTokens`）。
- * @returns 形如 `75.14M tokens` / `1.28K GB` 的字符串。
- */
 export function formatAmount(value: number | undefined, unit: string): string {
   const { text, unitLabel } = convertAmount(value, unit)
   return unitLabel === '' ? text : `${text} ${unitLabel}`
 }
 
-/**
- * 把"已用 / 总量"格式化为一段文本，单位只出现一次。
- *
- * @param used - 已用量。
- * @param total - 总量。
- * @param unit - 单位。
- * @returns 形如 `15.86M / 50M tokens` 的字符串。
- */
 export function formatAmountPair(
   used: number | undefined,
   total: number | undefined,
@@ -139,12 +80,6 @@ export function formatAmountPair(
   return `${left.text} / ${right.text}${label}`
 }
 
-/**
- * 水位线文本：从 ISO 时间取东八区的 `HH:MM`。
- *
- * @param iso - ISO 时间文本。
- * @returns `HH:MM`；无法解析时为空串。
- */
 export function formatWatermark(iso: string | undefined): string {
   if (iso === undefined || iso === '') return ''
   const parsed = Date.parse(iso)
@@ -155,13 +90,6 @@ export function formatWatermark(iso: string | undefined): string {
   return `${hh}:${mm}`
 }
 
-/**
- * 按长度截断模型名，避免长 id 撑破表格。
- *
- * @param name - 模型名。
- * @param max - 最大字符数。
- * @returns 截断后的名称。
- */
 export function truncate(name: string, max = 28): string {
   return name.length <= max ? name : `${name.slice(0, max - 1)}…`
 }

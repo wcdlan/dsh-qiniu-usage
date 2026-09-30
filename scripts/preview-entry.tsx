@@ -1,22 +1,18 @@
 /**
- * 视觉预览入口：把面板渲染成一段 HTML（含样式），供 scripts/preview.mjs 落盘后截图。
- *
- * 数据刻意贴近真实账号的样子（多模型、含已用完/零用量资源包、长名称），
- * 这样spacing 与截断问题才会暴露出来。
- *
- * 这不是测试，是开发期的视觉自检工具。
+ * 视觉预览入口：把面板渲染成 HTML，供 scripts/preview.mjs 落盘后截图。
+ * 开发期视觉自检工具，不是测试；数据刻意贴近真实账号形态以暴露 spacing 与截断。
  *
  * @module dsh-qiniu-usage/scripts/preview-entry
  */
 
-import { createElement } from 'react'
-import { renderToStaticMarkup } from 'react-dom/server'
-import { SidebarUsageCard } from '../src/client/SidebarUsageCard.tsx'
-import { UsageDetailDialog } from '../src/client/UsageDetailDialog.tsx'
-import { UsageSection } from '../src/client/UsageSection.tsx'
-import { zh } from '../src/client/locales.ts'
-import { createUsageStore } from '../src/client/usage-store.ts'
-import type { OverviewPayload } from '../src/service.ts'
+import {createElement} from 'react'
+import {renderToStaticMarkup} from 'react-dom/server'
+import {SidebarUsageCard} from '../src/client/SidebarUsageCard.tsx'
+import {UsageDetailDialog} from '../src/client/UsageDetailDialog.tsx'
+import {UsageSection} from '../src/client/UsageSection.tsx'
+import {zh} from '../src/client/locales.ts'
+import {createUsageStore} from '../src/client/usage-store.ts'
+import type {OverviewPayload} from '../src/service.ts'
 
 /** 中文文案查表（带 `{name}` 占位符）。 */
 const dict = zh as unknown as Record<string, string>
@@ -27,7 +23,6 @@ function t(key: string, params?: Record<string, unknown>): string {
   return template.replace(/\{(\w+)\}/g, (_, name: string) => String(params[name] ?? `{${name}}`))
 }
 
-/** 贴近真实账号的用量数据。 */
 const USAGE: OverviewPayload['usage'] = {
   source: 'aksk',
   keyLabel: '全部 Key（汇总）',
@@ -41,8 +36,7 @@ const USAGE: OverviewPayload['usage'] = {
     end: '2026-09-17T12:00:00+08:00',
     timezone: 'Asia/Shanghai',
   },
-  // 取自真实账号的数据，再补齐几个模型：侧栏卡片的"缩略 + 其余 N 个"
-  // 只有在多模型下才看得出来，单一模型会让这段排版永远没被检查过。
+    // 多模型才能看出侧栏卡片"缩略 + 其余 N 个"的排版，单一模型这段永远不被检查。
   models: [
     {
       id: 'deepseek/deepseek-v4.1-flash',
@@ -79,7 +73,7 @@ const USAGE: OverviewPayload['usage'] = {
   fetchedAt: new Date().toISOString(),
 }
 
-/** 贴近真实账号的资源包数据（含零用量、已用完、长名称）。 */
+/** 资源包数据：覆盖零用量、已用完、长名称等边界形态。 */
 const RESPACK: NonNullable<OverviewPayload['respack']> = {
   items: [
     {
@@ -190,7 +184,6 @@ const RESPACK: NonNullable<OverviewPayload['respack']> = {
   warnings: [],
 }
 
-/** 造一个已就绪的 store（预览与浮层共用）。 */
 async function makeReadyStore(): Promise<ReturnType<typeof createUsageStore>> {
   const store = createUsageStore({ fetchImpl: makePreviewFetch() })
   store.actions.start()
@@ -212,7 +205,7 @@ async function makeReadyStore(): Promise<ReturnType<typeof createUsageStore>> {
   return store
 }
 
-/** 预览用的 Key 名册：取自真实账号（上游已脱敏）。 */
+/** 预览用的 Key 名册，取自真实账号（上游已脱敏）。 */
 const KEYS = [
   { label: 'dsh', masked: 'sk-69*****03bf3', apiKey: 'sk-69*****03bf3', hasUsage: undefined, hasToken: false },
   { label: 'Halo', masked: 'sk-15*****72ca6', apiKey: 'sk-15*****72ca6', hasUsage: false, hasToken: false },
@@ -244,7 +237,6 @@ function makePreviewFetch(): typeof fetch {
   }) as typeof fetch
 }
 
-/** 预览用的宿主载荷。 */
 function makePayload(): OverviewPayload {
   return {
     ok: true,
@@ -256,12 +248,7 @@ function makePayload(): OverviewPayload {
 }
 
 /**
- * 渲染面板为 HTML 片段。
- *
- * 异步：先把 store 推到 ready（SSR 不跑 effect，必须显式驱动），再静态渲染。
- *
- * @param options - `key` 用于预览"选了具体 Key、但当天上游未归属"的提示态。
- * @returns 面板的静态 HTML。
+ * 渲染面板为 HTML 片段：SSR 不跑 effect，必须显式把 store 推到 ready 再静态渲染。
  */
 export async function renderPanel(): Promise<string> {
   const payload: OverviewPayload = {
@@ -272,7 +259,6 @@ export async function renderPanel(): Promise<string> {
     fetchedAt: new Date().toISOString(),
   }
 
-  // store 预置好数据：SSR 不跑 effect，所以直接给一个已就绪的快照。
   const fetchImpl = (async (input: RequestInfo | URL) => {
     const url = new URL(String(input), 'http://localhost')
     const body = url.pathname.endsWith('/credentials')
@@ -300,12 +286,7 @@ export async function renderPanel(): Promise<string> {
   }))
 }
 
-/**
- * 渲染侧栏速览卡片为 HTML 片段（左侧栏视图用）。
- *
- * @param options - `expanded` 直接渲染展开态（SSR 没有事件处理器，点不出来）。
- * @returns 卡片静态 HTML。
- */
+/** 渲染侧栏速览卡片。SSR 没有事件处理器，展开态只能靠 `expanded` 直接渲染。 */
 export async function renderSidebarCard(options: { expanded?: boolean } = {}): Promise<string> {
   const store = await makeReadyStore()
   return renderToStaticMarkup(
@@ -313,12 +294,7 @@ export async function renderSidebarCard(options: { expanded?: boolean } = {}): P
   )
 }
 
-/**
- * 渲染详情弹窗为 HTML 片段。
- *
- * @param options - 初始栏目（SSR 点不了 tab）。
- * @returns 弹窗静态 HTML。
- */
+/** 渲染详情弹窗。SSR 点不了 tab，初始栏目只能靠 `tab`。 */
 export async function renderDetailDialog(options: { tab?: 'usage' | 'respack' } = {}): Promise<string> {
   const store = await makeReadyStore()
   return renderToStaticMarkup(

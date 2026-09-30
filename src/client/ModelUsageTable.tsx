@@ -1,39 +1,19 @@
-/**
- * 各模型用量表。
- *
- * 布局决定（本次改版重点）：
- *
- * - **CSS Grid 四列**：名字（内含占比条）| 输入 | 输出 | 合计。三个数字列固定宽并
- *   右对齐、启用 `tabular-nums`，跨行数位对齐。
- * - 占比条放在**名字下方**而不是单独一列：面板内容宽约 548px，单独一列会把模型名
- *   挤到必须省略；名字是主标识，优先保它。条贴在名字下面也让归属关系更明确。
- * - 缓存/其他计费项的明细放在悬停提示里（该提示本来就列出每个原始计费项），
- *   表格本身保持单行高、行距一致。
- * - 超过 20 行折叠为"其余 N 个模型合计"。
- *
- * @module dsh-qiniu-usage/client/ModelUsageTable
- */
+// 占比条放在名字下方而非单独一列：面板内容宽约 548px，单独一列会把模型名挤到必须省略。
+import {createElement, type ReactNode, useState} from 'react'
+import type {UsageModel} from '../qiniu/usage.ts'
+import {formatTokens, truncate} from './format.ts'
+import {barFillStyle, cls} from './styles.ts'
 
-import { createElement, useState, type ReactNode } from 'react'
-import type { UsageModel } from '../qiniu/usage.ts'
-import { formatPercent, formatTokens, truncate } from './format.ts'
-import { barFillStyle, cls } from './styles.ts'
-
-/** 超过这个行数就折叠。 */
 const COLLAPSE_THRESHOLD = 20
 
-/** 翻译函数签名。 */
 type Translate = (key: string, params?: Record<string, unknown>) => string
 
-/** 组件属性。 */
 export interface ModelUsageTableProps {
   models: UsageModel[]
-  /** 全部模型合计，用于计算每行占比。 */
   grandTotal: number
   t: Translate
 }
 
-/** 模型行：名字 + 占比条 + 输入/输出/合计。 */
 function renderRow(model: UsageModel, grandTotal: number, t: Translate): ReactNode {
   const fraction = grandTotal > 0 ? model.total / grandTotal : 0
   const cachedRead = model.totalsByKind.cachedInput
@@ -71,7 +51,6 @@ function renderRow(model: UsageModel, grandTotal: number, t: Translate): ReactNo
   )
 }
 
-/** 折叠摘要行：跨越全部列。 */
 function renderSummaryRow(hiddenCount: number, hiddenTotal: number, t: Translate): ReactNode {
   return createElement(
     'div',
@@ -84,12 +63,6 @@ function renderSummaryRow(hiddenCount: number, hiddenTotal: number, t: Translate
   )
 }
 
-/**
- * 模型用量表。
- *
- * @param props - 模型列表、总用量与翻译函数。
- * @returns 表格元素。
- */
 export function ModelUsageTable({ models, grandTotal, t }: ModelUsageTableProps): ReactNode {
   const [expanded, setExpanded] = useState(false)
 

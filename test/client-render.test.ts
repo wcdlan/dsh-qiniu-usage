@@ -1,39 +1,23 @@
-/**
- * 面板**渲染**测试。
- *
- * 存在的理由：262 项测试当时全绿，但界面里「七牛云用量」是一块空白 —— 因为
- * 没有任何测试真正渲染过这个组件。真实原因是**注入面契约理解错了**：
- *
- * - `inject: face` 返回对象的成员会被**摊平成组件 props**（`props.store`），
- *   而我读的是 `props.face` → 永远 `undefined` → 渲染出一个极小的占位符，看着就是空的。
- * - `t` 由框架按 `locale: NS` 注入，不该自己塞进注入面。
- *
- * 所以这里用 react-dom/server 把组件渲染成 HTML 并断言**用户能看见的文字**，
- * 而不是只测 store 这类零件。
- *
- * `t` 用真实 `zh` 字典实现，并在键缺失时**抛错** —— 这样漏翻译也会被抓住。
- *
- * @module dsh-qiniu-usage/test/client-render
- */
+// 262 项测试曾全绿、界面却是一块空白：此前没有任何测试真正渲染过组件。
+// 根因是注入面契约：inject 返回对象的成员被摊平成 props（props.store），t 由框架按 locale 注入、不该自己塞。
 
-import { strict as assert } from 'node:assert'
-import { describe, it } from 'vitest'
-import { createElement } from 'react'
-import { renderToStaticMarkup } from 'react-dom/server'
-import { UsageSection, type UsageSectionProps } from '../src/client/UsageSection.tsx'
-import { SidebarUsageCard, MODEL_PREVIEW_COUNT } from '../src/client/SidebarUsageCard.tsx'
-import { UsageDetailDialog } from '../src/client/UsageDetailDialog.tsx'
-import { formatTokens } from '../src/client/format.ts'
-import { cls } from '../src/client/styles.ts'
-import { zh } from '../src/client/locales.ts'
-import { createUsageStore } from '../src/client/usage-store.ts'
-import { CredentialAccess } from '../src/credentials.ts'
-import { resolveConfig } from '../src/config.ts'
-import { QiniuUsageService, type KeysPayload, type OverviewPayload } from '../src/service.ts'
-import { akskKeyGroups, akskUnattributed } from './fixtures/usage.ts'
-import { monthOverviewPage, respackListPage } from './fixtures/respack.ts'
+import {strict as assert} from 'node:assert'
+import {describe, it} from 'vitest'
+import {createElement} from 'react'
+import {renderToStaticMarkup} from 'react-dom/server'
+import {UsageSection, type UsageSectionProps} from '../src/client/UsageSection.tsx'
+import {MODEL_PREVIEW_COUNT, SidebarUsageCard} from '../src/client/SidebarUsageCard.tsx'
+import {UsageDetailDialog} from '../src/client/UsageDetailDialog.tsx'
+import {formatTokens} from '../src/client/format.ts'
+import {zh} from '../src/client/locales.ts'
+import {createUsageStore} from '../src/client/usage-store.ts'
+import {CredentialAccess} from '../src/credentials.ts'
+import {resolveConfig} from '../src/config.ts'
+import {type KeysPayload, type OverviewPayload, QiniuUsageService} from '../src/service.ts'
+import {akskKeyGroups, akskUnattributed} from './fixtures/usage.ts'
+import {monthOverviewPage, respackListPage} from './fixtures/respack.ts'
 
-/** 字典查表实现，带 `{name}` 占位符替换；键缺失直接抛错。 */
+/** 字典查表，带 {name} 占位符替换；键缺失直接抛错。 */
 const dict = zh as unknown as Record<string, string>
 function translate(key: string, params?: Record<string, unknown>): string {
   const template = dict[key]
@@ -44,13 +28,7 @@ function translate(key: string, params?: Record<string, unknown>): string {
   return template.replace(/\{(\w+)\}/g, (_, name: string) => String(params[name] ?? `{${name}}`))
 }
 
-/**
- * 造一个**宿主上游**的 fetch 替身：用量走 qnaigc 外壳，财务走 qiniu 外壳。
- *
- * 注意层次：客户端 store 访问的是**宿主自己的** `/overview` 等路由，不是上游 API。
- * 所以这里只用来让真实 `QiniuUsageService` 产出载荷，再由下面的
- * {@link makeClientFetch} 以宿主载荷形态回给 store。
- */
+// 宿主上游 fetch 替身：只让真实 QiniuUsageService 产出载荷，再交由 makeClientFetch 以宿主形态回给 store。
 function makeUpstreamFetch(options: { emptyUsage?: boolean; unattributedUsage?: boolean } = {}): typeof fetch {
   const json = (body: unknown, status = 200): Response =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
@@ -69,12 +47,8 @@ function makeUpstreamFetch(options: { emptyUsage?: boolean; unattributedUsage?: 
   }) as typeof fetch
 }
 
-/**
- * 用真实 service 产出一份宿主 `/overview` 载荷。
- *
- * 刻意把资源包单位改成上游真实存在的 `kTokens`：默认 fixture 用的是 `GB`，
- * 那样就永远测不到"单位自带量级"的换算路径（会变成空断言）。
- */
+// 用真实 service 产出一份宿主 /overview 载荷；刻意把资源包单位改成上游真实的 k/tokens：
+// 默认 fixture 用 GB，那样就永远测不到"单位自带量级"的换算路径（会变成空断言）。
 async function makePayload(options: { emptyUsage?: boolean; unattributedUsage?: boolean } = {}): Promise<OverviewPayload> {
   const service = new QiniuUsageService({
     config: resolveConfig(),
@@ -103,12 +77,7 @@ async function makePayload(options: { emptyUsage?: boolean; unattributedUsage?: 
   return payload
 }
 
-/**
- * 造一个**宿主路由**的 fetch 替身（客户端 store 真正访问的那一层）。
- *
- * @param options - 让 /overview 失败或返回空用量。
- * @returns 可直接注入 store 的 fetch。
- */
+// 宿主路由 fetch 替身（客户端 store 真正访问的那一层），可直接注入 store。
 function makeClientFetch(options: {
   failUsage?: boolean
   emptyUsage?: boolean
@@ -147,14 +116,7 @@ function makeClientFetch(options: {
   }) as typeof fetch
 }
 
-/**
- * 造一个 store 并渲染设置页。
- *
- * SSR 不执行 `useEffect`，所以这里显式驱动凭据那条支线（设置页只读它）。
- *
- * @param options - 是否传入注入面、是否带设置作用域。
- * @returns 渲染出的 HTML。
- */
+// 造一个 store 并渲染设置页；SSR 不执行 useEffect，所以显式驱动凭据支线（设置页只读它）。
 async function renderSection(options: {
   /** 注入的设置作用域替身。 */
   settings?: { getSnapshot(): { value?: { pollIntervalSec?: number } }; subscribe(fn: () => void): () => void; set?(f: string, v: unknown): Promise<boolean> }
@@ -258,7 +220,6 @@ describe('设置页渲染 · 只做配置与自检', () => {
   it('缺少 t 时退化为显示键名而不是崩掉', async () => {
     const store = createUsageStore({ fetchImpl: makeClientFetch() })
     await new Promise((resolve) => setTimeout(resolve, 10))
-    // 只给 store，不给 t
     const html = renderToStaticMarkup(createElement(UsageSection, { store } as UsageSectionProps))
     assert.ok(html.includes('qiniu.title'), '缺 t 时应退化为键名，而不是抛错或空白')
   })
@@ -389,7 +350,6 @@ describe('详情弹窗 · 渲染', () => {
     assert.ok(html.includes('role="tablist"'), '应有栏目导航')
     assert.ok(html.includes(translate('qiniu.detail.tab.usage')), '应有用量栏目')
     assert.ok(html.includes(translate('qiniu.detail.tab.respack')), '应有资源包栏目')
-    // 默认停在用量栏：有模型表，没有资源包卡片。
     assert.ok(html.includes('DeepSeek V4 Pro'), '默认应显示用量栏内容')
     assert.equal(html.includes(translate('qiniu.respack.heading')), false, '默认不该把资源包也渲染出来')
   })
@@ -432,7 +392,6 @@ describe('详情弹窗 · 渲染', () => {
     assert.ok(html.includes(translate('qiniu.respack.packs')), '应含逐包明细块')
     assert.ok(html.includes('中国大陆全时段加速流量5TB'), '应含资源包名')
     assert.ok(html.includes(translate('qiniu.card.detailHint')), '应提示完整面板的位置')
-    // 资源包栏不该出现模型表。
     assert.equal(html.includes('DeepSeek V4 Pro'), false, '资源包栏不该带出用量表')
   })
 

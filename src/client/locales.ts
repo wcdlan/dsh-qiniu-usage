@@ -1,30 +1,16 @@
-/**
- * 客户端文案字典（zh / en）。
- *
- * `LocaleNamespaceMap` 是**声明合并**注册表：不在这里 merge 自己的命名空间，
- * `ctx.locale.register(NS, ...)` 与 `ctx.locale.bind(NS)` 都会因为
- * "string 不可赋给 keyof LocaleNamespaceMap" 而编译失败。
- *
- * @module dsh-qiniu-usage/client/locales
- */
+import type {LocaleDictOf} from '@deepseek-ai/dsh-client-ui-slots'
 
-import type { LocaleDictOf } from '@deepseek-ai/dsh-client-ui-slots'
-
-/** locale 命名空间。 */
 export const NS = 'dsh-qiniu-usage'
 
-/** 中文文案。 */
 export const zh = {
   'qiniu.title': '七牛云用量',
   'qiniu.subtitle': '指定 API Key 当天的各模型 Token 用量，以及账号资源包的利用情况',
 
-  // 工具条
   'qiniu.refresh': '刷新',
   'qiniu.refreshing': '刷新中…',
   'qiniu.updated': '更新于 {time}',
   'qiniu.loading': '正在加载用量数据…',
 
-  // 用量表
   'qiniu.usage.heading': '各模型用量',
   'qiniu.usage.model': '模型',
   'qiniu.usage.input': '输入',
@@ -39,7 +25,6 @@ export const zh = {
   'qiniu.usage.collapse': '收起',
   'qiniu.usage.unitHint': '单位以响应返回为准；原始值见悬停提示。',
 
-  // 资源包
   'qiniu.respack.heading': '资源包利用情况（本月）',
   'qiniu.respack.capacity': '当月可用',
   'qiniu.respack.used': '已用',
@@ -58,7 +43,6 @@ export const zh = {
   'qiniu.respack.detail.deductStatus': '出账状态',
   'qiniu.respack.scopeHint': '「已用」为资源包生命周期累计；当月口径见上方利用率。',
 
-  // 凭据
   'qiniu.credentials.heading': '凭据',
     'qiniu.credentials.accessKey': 'AccessKey',
   'qiniu.credentials.secretKey': 'SecretKey',
@@ -78,7 +62,6 @@ export const zh = {
 
   'qiniu.respack.packsCount': '{count} 个资源包',
 
-  // 设置页：只做配置
       'qiniu.settings.restHint': '时区、缓存 TTL、Key 名单等其余配置走 profile 的插件配置（cordis.patch.yml）。',
   'qiniu.settings.pollHeading': '自动刷新',
   'qiniu.settings.pollLabel': '刷新间隔（秒）',
@@ -89,7 +72,6 @@ export const zh = {
   'qiniu.settings.pollSaved': '已保存',
   'qiniu.settings.pollFailed': '这个部署不接受写入（只读）',
 
-  // Key 列表（来自 AK/SK 接口）
   'qiniu.keys.heading': 'Key 列表',
   'qiniu.keys.count': '{count} 个 Key',
   'qiniu.keys.empty': '还没有拿到 Key 名册：先确认上面的 AK/SK 可用。',
@@ -100,7 +82,6 @@ export const zh = {
   'qiniu.keys.usage.no': '无用量',
   'qiniu.keys.usage.unknown': '未归属',
 
-  // 详情弹窗：用量 / 资源包两个栏目 + 筛选
   'qiniu.detail.tab.usage': '各模型用量',
   'qiniu.detail.tab.respack': '资源包利用',
   'qiniu.detail.tablist': '详情分栏',
@@ -113,7 +94,6 @@ export const zh = {
   'qiniu.usage.keySingleHint': '单 Key 口径只有上游完成归属后才有数据，所以查的是昨天。',
   'qiniu.usage.keyUnattributed': '上游还没把当天用量归属到「{key}」，下面是账号汇总。',
 
-  // 侧栏速览卡片（左侧会话列表下方）
   'qiniu.card.today': '今日用量',
   'qiniu.card.yesterday': '昨日用量',
   'qiniu.card.expand': '展开用量速览',
@@ -123,12 +103,10 @@ export const zh = {
   'qiniu.card.failed': '取数失败，点「详情」重试',
   'qiniu.card.detailHint': '完整面板与凭据配置见「设置 → 七牛云用量」。',
 
-  // 详情弹窗
   'qiniu.detail.title': '用量详情',
   'qiniu.detail.close': '关闭',
   'qiniu.detail.reload': '刷新',
 
-  // 状态
   'qiniu.empty.noUsage': '当日没有用量记录',
   'qiniu.empty.noRespack': '账号下没有资源包',
   'qiniu.warn.dataDelay': '当天数据可能有延迟',
@@ -139,7 +117,6 @@ export const zh = {
   'qiniu.error.auth': 'AK/SK 无效或已过期',
 } as const
 
-/** 英文文案。 */
 export const en: LocaleDictOf<typeof NS> = {
   'qiniu.title': 'Qiniu Usage',
   'qiniu.subtitle': "Per-model token usage for a given API key today, plus the account's resource-pack utilisation",
@@ -200,7 +177,6 @@ export const en: LocaleDictOf<typeof NS> = {
 
   'qiniu.respack.packsCount': '{count} packs',
 
-  // Settings page: configuration only
       'qiniu.settings.restHint': 'Timezone, cache TTLs, key roster and the rest live in the profile plugin config (cordis.patch.yml).',
   'qiniu.settings.pollHeading': 'Auto refresh',
   'qiniu.settings.pollLabel': 'Refresh interval (seconds)',
@@ -211,7 +187,6 @@ export const en: LocaleDictOf<typeof NS> = {
   'qiniu.settings.pollSaved': 'Saved',
   'qiniu.settings.pollFailed': 'This deployment refuses the write (read-only)',
 
-  // Key list (from the AK/SK interface)
   'qiniu.keys.heading': 'Keys',
   'qiniu.keys.count': '{count} keys',
   'qiniu.keys.empty': 'No key roster yet — confirm the AK/SK above works.',
@@ -257,17 +232,12 @@ export const en: LocaleDictOf<typeof NS> = {
   'qiniu.error.auth': 'The AK/SK is invalid or expired',
 }
 
-/**
- * 把本包的命名空间与文案键并集注册进 locale 类型表。
- *
- * `zh` 是键集合的权威来源，`en` 用 {@link LocaleDictOf} 约束以保证双语键集
- * 完全一致（少一个键就编译失败，而不是在界面上露出空文案）。
- */
+// 声明合并注册本命名空间（不 merge 则 register/bind 编译失败）。
+// `zh` 是键集合权威来源，`en` 用 LocaleDictOf 约束保证双语键集一致（少键即编译失败）。
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
     'dsh-qiniu-usage': keyof typeof zh
   }
 }
 
-/** 文案键并集。 */
 export type LocaleKey = keyof typeof zh

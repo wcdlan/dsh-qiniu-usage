@@ -1,23 +1,10 @@
-/**
- * 构建产物契约测试。
- *
- * M0 的验收标准之一是"空插件能被 `dsh web` 加载不报错"、"打通 lib/client.js
- * 构建格式"。这两条无法在单测里真起一个 dsh web，但可以断言**产物契约** ——
- * 而契约漂移正是真实踩坑的地方。
- *
- * 依赖 `pnpm build:js` 的产物；产物缺失时测试会明确失败并提示先构建，而不是
- * 静默跳过。
- *
- * @module dsh-qiniu-usage/test/bundle
- */
-
-import { strict as assert } from 'node:assert'
-import { existsSync } from 'node:fs'
-import { readFile, readdir, stat } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import {strict as assert} from 'node:assert'
+import {existsSync} from 'node:fs'
+import {readdir, readFile, stat} from 'node:fs/promises'
+import {dirname, resolve} from 'node:path'
+import {fileURLToPath} from 'node:url'
 import vm from 'node:vm'
-import { describe, it } from 'vitest'
+import {describe, it} from 'vitest'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const HOST_BUNDLE = resolve(root, 'lib/index.js')
@@ -42,11 +29,7 @@ describe('产物 · 宿主半区 lib/index.js', () => {
     assert.ok(mod.Config, '必须导出 Config schema')
     assert.equal(mod.SETTINGS_NAMESPACE, 'dsh-qiniu-usage')
     assert.equal(typeof mod.resolveConfig, 'function')
-    // ⚠ 这条断言在 M0 时写反过：当时断言 default 必须存在（因为源码里有
-    // `export default apply`），结果把一个**会导致 dsh web 启动失败**的形状
-    // 当成了正确行为。cordis-plugin-loader 的 `unwrapExports` 会优先取 default，
-    // 拿到裸函数后丢失整份命名空间（含 inject），启动期报
-    // `cannot get property "webServer" without inject`。
+      // ⚠ M0 时这条断言写反过：把"导出 default"当成正确形状 —— loader 优先取 default、丢掉 inject，启动期报 cannot get property "webServer" without inject。
     assert.equal(
       mod.default,
       undefined,
@@ -95,11 +78,7 @@ describe('产物 · 客户端半区 lib/client.js', () => {
     const source = await readFile(CLIENT_BUNDLE, 'utf8')
 
     const requiredSpecifiers: string[] = []
-    // 平台冻结模块表里可用的外部模块。只给最小替身：本测试关心的是"走了 require
-    // 通道"，不是渲染结果。
-    //
-    // 这份清单就是本插件对宿主平台的**依赖面**：加一项都要有意识（例如悬浮按钮需要
-    // react-dom/client 才能在 body 上挂 React root）。
+      // 平台冻结模块表；这份清单就是本插件对宿主的依赖面，加一项都要有意识，替身只给最小实现。
     const PLATFORM_MODULES: Record<string, unknown> = {
       react: { createElement: () => null },
       'react/jsx-runtime': { jsx: () => null, jsxs: () => null, Fragment: null },
@@ -173,17 +152,14 @@ describe('产物 · 客户端半区 lib/client.js', () => {
 
   it('不包含任何凭据来源读取路径（安全底线）', async () => {
     const source = await readFile(CLIENT_BUNDLE, 'utf8')
-    // 客户端 bundle 里不得有任何"自己去取凭据"的路径：
-    // - 环境变量直读（那是宿主半区的事）
-    // - 硬编码的引用名（引用名一律由宿主 describe 回传，客户端不预置）
+      // 客户端不得自行取凭据：环境变量直读属宿主；引用名一律由宿主 describe 回传，客户端不预置。
     for (const forbidden of ['process.env', 'QINIU_ACCESS_KEY', 'QINIU_SECRET_KEY']) {
       assert.ok(
         !source.includes(forbidden),
         `客户端 bundle 不应出现 "${forbidden}" —— 浏览器永不接触凭据`,
       )
     }
-    // `secretKey` 作为 describe 结果的属性名是合法的（表单要显示它的状态），
-    // 但绝不能出现"把它的值取出来"的读法。
+      // secretKey 作为 describe 结果的属性名合法（表单要显示状态），但不得读取其值。
     for (const forbidden of ['secretKey.value', 'secretKey?.value']) {
       assert.ok(!source.includes(forbidden), `客户端不应读取 ${forbidden}`)
     }
@@ -195,28 +171,16 @@ describe('产物 · 客户端半区 lib/client.js', () => {
     for (const allowed of ['/overview', '/refresh', '/keys', '/credentials', '/respack/detail']) {
       assert.ok(source.includes(allowed), `客户端应当访问 ${allowed}`)
     }
-    // 客户端确实会发送被写入的值（这是它必须做的），但**不得**出现任何把
-    // "字段名 + 值"读到本地并渲染的路径。用正则可读的形式钉住这一点：
-    // `accessKey` / `secretKey` 只应作为 describe 结果的对象属性出现在类型位置，
-    // 不应作为读取源（例如 `.accessKey.value`）。
+      // 客户端会发送被写入的值（必须），但不得把"字段名 + 值"读回本地渲染（如 .accessKey.value）。
     for (const forbidden of ['accessKey.value', 'secretKey.value', 'accessKey?.value', 'secretKey?.value']) {
       assert.ok(!source.includes(forbidden), `客户端不应读取 ${forbidden}`)
     }
   })
 })
 
-/**
- * 产物**新鲜度**检查。
- *
- * 这个文件其余用例断言的都是"磁盘上那个 lib/*.js 长什么样"，而磁盘上的产物
- * 可能比源码旧 —— 源码改坏之后旧产物仍在，测试全绿。真踩过：
- * `sumMonthRemain` 被放进 `qiniu/respack.ts`（经 `sign.ts` → `node:crypto`），
- * 浏览器产物其实已经构建不出来了，但 `npm test` 读的是上一次成功构建的旧
- * `lib/client.js`，一路绿到 `npm run build` 才暴露。
- *
- * 依赖图本身的守卫在 `test/client-graph.test.ts`（真跑 esbuild）；这里只负责
- * 让"拿旧产物当证据"这件事没法悄悄发生。
- */
+// 磁盘上的 lib/*.js 可能比源码旧，源码改坏后旧产物仍在、测试全绿。真踩过：
+// sumMonthRemain 经 sign.ts → node:crypto，浏览器产物已构建不出来，但 npm test 读的是旧产物。
+// 依赖图守卫（真跑 esbuild）见 test/client-graph.test.ts。
 describe('产物 · 新鲜度', () => {
   it('lib/ 产物不早于源码（否则请先 npm run build）', async () => {
     /** 收集一个路径（目录则递归）下最新的 mtime。 */

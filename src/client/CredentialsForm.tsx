@@ -1,21 +1,8 @@
-/**
- * 凭据表单。
- *
- * 设计文档 §9.3 与 §10.2 的**两层语义**必须体现出来：
- *
- * - **键名**（`QINIU_ACCESS_KEY` / `QINIU_SECRET_KEY`，来自 config）→ 只读展示，
- *   用等宽"代码块"样式明确它是名字而不是值。`CredentialRef` 是 POSIX 环境变量名。
- * - **值**（AK/SK 明文）→ 才是输入框。
- *
- * 提交后**立即清空输入框**，只回显 `configured / source / writable`。
- *
- * @module dsh-qiniu-usage/client/CredentialsForm
- */
+// 凭据表单：键名只读（CredentialRef 是 POSIX 环境变量名），值才是输入框；提交后立即清空输入框。
+import {createElement, type ReactNode, useState} from 'react'
+import {cls} from './styles.ts'
 
-import { createElement, useState, type ReactNode } from 'react'
-import { cls } from './styles.ts'
-
-/** 单个引用的状态（与宿主 `CredentialStatus` 同形，这里不跨包 import 宿主类型）。 */
+/** 与宿主 `CredentialStatus` 同形（不跨包 import 宿主类型）。 */
 export interface CredentialStatusView {
   ref: string
   configured: boolean
@@ -31,31 +18,26 @@ export interface CredentialsView {
   hasStore: boolean
 }
 
-/** 翻译函数签名。 */
 type Translate = (key: string, params?: Record<string, unknown>) => string
 
-/** 组件属性。 */
 export interface CredentialsFormProps {
   credentials: CredentialsView | null
   t: Translate
-  /** 写入一个引用。 */
   onSet: (ref: string, value: string) => Promise<void>
-  /** 清除一个引用。 */
   onUnset: (ref: string) => Promise<void>
 }
 
-/** 一行凭据：只读键名 + 值输入框 + 保存/清除 + 状态。 */
 function CredentialRow(props: {
   title: string
   hint: string
   status: CredentialStatusView | null
   t: Translate
-  /** 受控值：草稿由 {@link CredentialsForm} 统一持有。 */
+    // 草稿由 CredentialsForm 统一持有。
   value: string
   onValueChange: (next: string) => void
   onSet: (value: string) => Promise<void>
   onUnset: () => Promise<void>
-  /** 是否用密码框（SK 用）。 */
+    // SK 用密码框。
   secret?: boolean
 }): ReactNode {
   const { title, hint, status, t, value, onValueChange, onSet, onUnset, secret } = props
@@ -68,7 +50,7 @@ function CredentialRow(props: {
     setError(null)
     try {
       await onSet(value)
-      // 提交后立即清空 —— 明文不在界面里停留。
+        // 提交后立即清空，明文不在界面里停留。
       onValueChange('')
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
@@ -100,7 +82,6 @@ function CredentialRow(props: {
   return createElement(
     'div',
     { className: cls.credRow },
-    // 第一层：只读键名（等宽代码块 = 名字，不是值）
     createElement(
       'div',
       { className: cls.credHead },
@@ -113,7 +94,6 @@ function CredentialRow(props: {
       ),
       createElement('span', { className: cls.credStatus }, sourceLabel),
     ),
-    // 第二层：值输入框
     createElement(
       'div',
       { className: cls.credInputRow },
@@ -165,17 +145,9 @@ function CredentialRow(props: {
   )
 }
 
-/**
- * 凭据表单。
- *
- * @param props - 凭据状态、翻译函数与读写回调。
- * @returns 表单元素；无凭据库时整块置灰并说明原因。
- */
 export function CredentialsForm({ credentials, t, onSet, onUnset }: CredentialsFormProps): ReactNode {
-  /** 两行输入框的草稿值；提交成功后各自清空。 */
   const [drafts, setDrafts] = useState({ accessKey: '', secretKey: '' })
 
-  /** 更新一个草稿。 */
   const editDraft = (field: 'accessKey' | 'secretKey', next: string): void => {
     setDrafts((current) => ({ ...current, [field]: next }))
   }

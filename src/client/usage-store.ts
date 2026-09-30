@@ -1,112 +1,74 @@
-/**
- * 客户端状态。
- *
- * 刻意**不依赖平台内部 store 引擎**（`@deepseek-ai/dsh-client-store` 不在 profile
- * 顶层，dsh-usage 需要 try/catch 里再 join 字符串去 require）。这里用 React 自带的
- * `useSyncExternalStore`，契约只有 `subscribe` + `getSnapshot`，零平台依赖。
- *
- * `fetch` 可注入，因此状态机（首屏 / 刷新保留旧数据 / 部分失败 / 全失败）都能直接
- * 单测，不需要真的渲染组件。
- *
- * @module dsh-qiniu-usage/client/usage-store
- */
+// 客户端状态。刻意不依赖平台内部 store 引擎（`@deepseek-ai/dsh-client-store` 不在
+// profile 顶层），而用 React 的 `useSyncExternalStore`，契约只有 `subscribe` + `getSnapshot`。
+// `fetch` 可注入，状态机（首屏 / 刷新保留旧数据 / 部分失败 / 全失败）可直接单测。
 
-import type { KeysPayload, OverviewPayload, SourceError } from '../service.ts'
-import type { RespackDetail } from '../qiniu/respack.ts'
-import type { CredentialsView } from './CredentialsForm.tsx'
+import type {KeysPayload, OverviewPayload, SourceError} from '../service.ts'
+import type {RespackDetail} from '../qiniu/respack.ts'
+import type {CredentialsView} from './CredentialsForm.tsx'
 
-/** 面板状态机。 */
 export type UiStatus = 'idle' | 'loading' | 'ready' | 'error'
 
-/** 面板状态。 */
 export interface UsageState {
   status: UiStatus
-  /** 最近一次成功取到的载荷；刷新期间保留旧值以免闪空。 */
+    // 刷新期间保留旧值以免闪空。
   data: OverviewPayload | null
-  /** 面板级错误（传输层失败或 404）。 */
   error: string | null
-  /** 当前日期口径。 */
   day: string
-  /** 当前 Key 过滤；空串为账号全量汇总。 */
+    // 空串 = 账号全量汇总。
   key: string
-  /** 是否正在刷新（已有数据时用来显示顶部细进度条）。 */
   refreshing: boolean
-  /** 上一次成功刷新的时间戳。 */
   updatedAt: number | null
-  /** Key 选择器候选集。 */
   keys: KeysPayload['keys']
-  /** 已验证的 Key 选择器（仅当含 Key 选择器的实现在用）。 */
   keyFilter: string | null
-  /** 最近一次下钻结果，按 `orderHash:poId` 缓存。 */
+    // 按 `orderHash:poId` 缓存。
   details: Record<string, RespackDetail>
-  /** 凭据状态（describe 形状，永不含值）；未加载时为 `null`。 */
+    // describe 形状，永不含值；未加载时为 `null`。
   credentials: CredentialsView | null
-  /** 凭据表单的最近一次错误。 */
   credentialsError: string | null
 }
 
-/** 面板对外暴露的动作。 */
 export interface UsageStoreActions {
   start(): void
   stop(): void
   setDay(day: string): void
   setKey(key: string): void
-  /**
-   * 同时改日期与 Key（详情弹窗"选具体 Key 就切到昨天"用的），**只取一次数**。
-   *
-   * 分成两次调用会打两次上游（`day=today&key=X` 那次的结果马上被丢掉）——
-   * 上游限速 5 次/秒，能不浪费就不浪费。
-   *
-   * @param day - 新的日期口径。
-   * @param key - 新的 Key 过滤。
-   */
+
+    // 详情弹窗"选具体 Key 就切到昨天"用，**只取一次数**：分两次调用会打两次上游，
+    // 而上游限速 5 次/秒。
   setFilters(day: string, key: string): void
   refresh(): void
   loadKeys(): void
   loadDetail(orderHash: string, poId: number): void
-  /**
-   * 更新轮询间隔（毫秒，`<= 0` 为纯手动）。
-   *
-   * **必须原地更新而不是重建 store**：注入面（`face`）在分区注册时就把它捕获进
-   * 闭包了，重建的实例组件拿不到。运行中也会按新值重装定时器。
-   */
+
+    // **必须原地更新而不是重建 store**：注入面（`face`）在分区注册时就把它捕获进闭包，
+    // 重建的实例组件拿不到。毫秒，`<= 0` 为纯手动。
   setPollIntervalMs(intervalMs: number): void
-  /** 读取凭据状态（describe 形状）。 */
   loadCredentials(): void
-  /** 写入一个凭据引用。 */
   setCredential(ref: string, value: string): Promise<void>
-  /** 清除一个凭据引用。 */
   unsetCredential(ref: string): Promise<void>
 }
 
-/** 组件消费的只读视图。 */
 export interface UsageStoreView {
   subscribe(listener: () => void): () => void
   getSnapshot(): UsageState
   actions: UsageStoreActions
 }
 
-/** {@link createUsageStore} 的参数。 */
 export interface UsageStoreOptions {
-  /** `fetch` 替身，默认全局 `fetch`。 */
   fetchImpl?: typeof fetch
-  /** 轮询间隔毫秒；`<= 0` 表示纯手动刷新。 */
+    // `<= 0` 表示纯手动刷新。
   pollIntervalMs?: number
-  /** 初始日期口径。 */
   initialDay?: string
-  /** 初始 Key 过滤。 */
   initialKey?: string
-  /** 每次请求的超时毫秒数。 */
   timeoutMs?: number
 }
 
-/** 面板 API 前缀；必须与宿主 `API_PREFIX` 一致。 */
+// 必须与宿主 `API_PREFIX` 一致。
 export const API_PREFIX = '/api/dsh-qiniu-usage'
 
-/** 单次请求超时；卡住的上游不该让请求堆积。 */
+// 卡住的上游不该让请求堆积。
 const DEFAULT_TIMEOUT_MS = 20_000
 
-/** 初始状态。 */
 function initialState(options: UsageStoreOptions): UsageState {
   return {
     status: 'idle',
@@ -124,24 +86,16 @@ function initialState(options: UsageStoreOptions): UsageState {
   }
 }
 
-/**
- * 创建面板状态容器。
- *
- * @param options - 可注入的 `fetch`、轮询间隔与初始口径。
- * @returns 只读视图 + 动作。
- */
 export function createUsageStore(options: UsageStoreOptions = {}): UsageStoreView {
   const doFetch = options.fetchImpl ?? globalThis.fetch
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
-  /** 可变：`setPollIntervalMs` 会原地改它，运行中也会重装定时器。 */
   let pollIntervalMs = options.pollIntervalMs ?? 0
 
   let state: UsageState = initialState(options)
   const listeners = new Set<() => void>()
-  /** 请求序号：迟到的响应不得覆盖更新的状态。 */
+    // 请求序号：迟到的响应不得覆盖更新的状态。
   let seq = 0
   let timer: ReturnType<typeof setInterval> | undefined
-  /** 面板是否在挂载周期内；关闭后不发请求。 */
   let running = false
 
   const emit = (next: UsageState): void => {
@@ -149,7 +103,6 @@ export function createUsageStore(options: UsageStoreOptions = {}): UsageStoreVie
     for (const listener of listeners) listener()
   }
 
-  /** 发起一次带超时的 JSON 请求。 */
   const requestJson = async (path: string, init?: RequestInit): Promise<unknown> => {
     const response = await doFetch(`${API_PREFIX}${path}`, {
       ...init,
@@ -164,7 +117,6 @@ export function createUsageStore(options: UsageStoreOptions = {}): UsageStoreVie
   const isOverview = (value: unknown): value is OverviewPayload =>
     typeof value === 'object' && value !== null && 'errors' in value && 'usage' in value
 
-  /** 拉取 overview（首屏或刷新）。 */
   const load = async (mode: 'initial' | 'refresh'): Promise<void> => {
     const requestSeq = seq + 1
     seq = requestSeq
@@ -202,7 +154,6 @@ export function createUsageStore(options: UsageStoreOptions = {}): UsageStoreVie
     }
   }
 
-  /** 按当前间隔安装定时器；先清旧的。 */
   const armTimer = (): void => {
     if (timer !== undefined) {
       clearInterval(timer)
@@ -364,24 +315,11 @@ export function createUsageStore(options: UsageStoreOptions = {}): UsageStoreVie
   }
 }
 
-/**
- * 面板里"是否所有数据源都失败"——用于区分"部分失败"与"整体失败"。
- *
- * @param data - 最近一次载荷。
- * @returns 两个数据源都缺失且至少有一条错误时为 `true`。
- */
 export function isTotalFailure(data: OverviewPayload | null): boolean {
   if (data === null) return false
   return data.usage === null && data.respack === null && data.errors.length > 0
 }
 
-/**
- * 按数据源取错误，供 UI 分源展示。
- *
- * @param errors - 载荷里的错误列表。
- * @param source - 数据源。
- * @returns 该源的错误，或 `undefined`。
- */
 export function errorFor(
   errors: SourceError[],
   source: SourceError['source'],
@@ -389,16 +327,8 @@ export function errorFor(
   return errors.find((error) => error.source === source)
 }
 
-/**
- * Key 选择器的候选列表：始终包含"全部 Key"。
- *
- * `hasUsage` 原样透传上游的三态：`undefined` 表示所选日期上游没有 Key 归属
- * 信息（当天数据尚未归属），此时**不能**标"无用量"——那是在说谎。
- *
- * @param keys - 上游名册与配置合并后的 Key 清单。
- * @param allLabel - "全部 Key"的显示文案。
- * @returns 选项数组。
- */
+// Key 选择器候选；`hasUsage` 原样透传上游三态：`undefined` 表示所选日期上游没有 Key
+// 归属信息（当天数据尚未归属），此时**不能**标"无用量"。
 export function keyOptions(
   keys: KeysPayload['keys'],
   allLabel: string,

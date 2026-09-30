@@ -1,73 +1,34 @@
-/**
- * 用量详情弹窗：分「各模型用量」与「资源包利用」两个栏目，导航点击切换。
- *
- * 它的前身是对话页的悬浮弹层（`FloatingUsage`）。改版的理由：左侧列表下方的速览卡片
- * 只放**缩略信息**，详细内容需要一个够宽的地方 —— 于是原来的整块内容搬进这个居中弹窗。
- *
- * 2026-09-30 二次改版：
- *
- * - **分栏**：用量表与资源包挤在一列里要滚很久，且两者口径无关；改成栏目导航后，
- *   每栏只留自己的筛选、告警与错误（`usage.warnings` 归用量栏，`respack.warnings`
- *   归资源包栏），一屏看得完。
- * - **单 Key 统计**：用量栏加回日期 + Key 选择器（设置页已不再展示用量）。
- *   单 Key 口径只有上游完成归属后才有数据，所以选具体 Key 时**自动切到昨天**，
- *   并就地说明原因；Key 名册来自 `/keys`。
- *
- * 定位用 `position: fixed`：因此即使组件的 DOM 挂在侧栏内部，弹窗也铺满视口而不是被
- * 侧栏宽度裁掉 —— `fixed` 的包含块是视口，祖先的 `overflow: hidden` 不会裁它
- * （只有 transform/filter/contain 才会，侧栏没有）。
- *
- * 关闭方式：Esc、点遮罩空白处、右上角「关闭」。
- *
- * @module dsh-qiniu-usage/client/UsageDetailDialog
- */
+// 用量详情弹窗：分「各模型用量」与「资源包利用」两栏，各栏只留自己的筛选/告警/错误。
+// 定位用 position:fixed，因此 DOM 挂在侧栏内部也铺满视口，不被侧栏宽度裁掉。
+import {createElement, type ReactNode, useEffect, useState, useSyncExternalStore} from 'react'
+import {ModelUsageTable} from './ModelUsageTable.tsx'
+import {RespackMonth} from './RespackMonth.tsx'
+import {RespackPacks} from './RespackPacks.tsx'
+import {formatClock, formatTokens, formatWatermark} from './format.ts'
+import {cls} from './styles.ts'
+import {keyOptions, type UsageState, type UsageStoreView} from './usage-store.ts'
 
-import { createElement, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { ModelUsageTable } from './ModelUsageTable.tsx'
-import { RespackMonth } from './RespackMonth.tsx'
-import { RespackPacks } from './RespackPacks.tsx'
-import { formatClock, formatTokens, formatWatermark } from './format.ts'
-import { cls } from './styles.ts'
-import { keyOptions, type UsageState, type UsageStoreView } from './usage-store.ts'
-
-/** 翻译函数签名。 */
 type Translate = (key: string, params?: Record<string, unknown>) => string
 
-/** 栏目。 */
 export type DetailTab = 'usage' | 'respack'
 
-/** 组件属性。 */
 export interface UsageDetailDialogProps {
   store: UsageStoreView
   t: Translate
-  /** 关闭回调（Esc / 遮罩 / 关闭按钮共用）。 */
   onClose: () => void
-  /**
-   * 初始栏目。
-   *
-   * 仅用于视觉预览与测试：SSR 出来的静态 HTML 没有事件处理器，切不了栏目。
-   */
+    // 仅用于视觉预览与测试：SSR 静态 HTML 无事件处理器，切不了栏目。
   initialTab?: DetailTab
 }
 
-/** 日期口径候选；与宿主 `/overview` 的 `day` 参数一致。 */
+// 与宿主 `/overview` 的 `day` 参数一致。
 const DAY_OPTIONS = ['today', 'yesterday'] as const
 
-/** 载荷里的错误条目（`data` 非空时才有）。 */
 type SourceErrorView = NonNullable<UsageState['data']>['errors'][number]
 
-/** 载荷里的用量快照（`data` 非空时才有）。 */
 type UsageView = NonNullable<UsageState['data']>['usage']
 
-/** 载荷里的资源包快照（`data` 非空时才有）。 */
 type RespackView = NonNullable<UsageState['data']>['respack']
 
-/**
- * 详情弹窗。
- *
- * @param props - store、翻译函数、关闭回调与初始栏目。
- * @returns 弹窗元素。
- */
 export function UsageDetailDialog({ store, t, onClose, initialTab }: UsageDetailDialogProps): ReactNode {
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
   const [tab, setTab] = useState<DetailTab>(initialTab ?? 'usage')
@@ -75,16 +36,16 @@ export function UsageDetailDialog({ store, t, onClose, initialTab }: UsageDetail
   const usage = state.data?.usage ?? null
   const respack = state.data?.respack ?? null
 
-  // 'idle' 也算加载中（卡片 start() 之前的那一帧），避免闪错误态。
+    // 'idle' 也算加载中（卡片 start() 之前那一帧），避免闪错误态。
   const loading = state.data === null && state.status !== 'error'
   const failed = state.status === 'error' && state.data === null
 
-  // Key 名册是另一条支线：弹窗的筛选器与设置页的 Key 表格都要它。
+    // Key 名册是另一条支线：弹窗筛选器与设置页 Key 表格都要它。
   useEffect(() => {
     store.actions.loadKeys()
   }, [store])
 
-  // Esc 关闭。挂在 document 上而不是弹窗元素上：焦点可能还在卡片的按钮上。
+    // Esc 关闭；挂 document 而非弹窗元素，因为焦点可能还在卡片的按钮上。
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') onClose()
@@ -104,7 +65,7 @@ export function UsageDetailDialog({ store, t, onClose, initialTab }: UsageDetail
     'div',
     {
       className: cls.overlay,
-      // 只有点在遮罩本身（不是弹窗内部）才关闭。
+        // 只有点在遮罩本身才关闭，点弹窗内部不关。
       onPointerDown: (event: { target: EventTarget | null; currentTarget: EventTarget | null }) => {
         if (event.target === event.currentTarget) onClose()
       },
@@ -151,7 +112,6 @@ export function UsageDetailDialog({ store, t, onClose, initialTab }: UsageDetail
         ),
       ),
 
-      // 栏目导航
       createElement(
         'div',
         { className: cls.tabBar, role: 'tablist', 'aria-label': t('qiniu.detail.tablist') },
@@ -208,7 +168,6 @@ export function UsageDetailDialog({ store, t, onClose, initialTab }: UsageDetail
   )
 }
 
-/** 用量栏：日期 + Key 筛选、延迟 / 未归属提示、模型表。 */
 function renderUsageTab({ store, state, usage, t }: {
   store: UsageStoreView
   state: UsageState
@@ -218,12 +177,7 @@ function renderUsageTab({ store, state, usage, t }: {
   const options = keyOptions(state.keys, t('qiniu.usage.key.all'))
   const unattributed = state.key !== '' && usage?.unattributedKeys === true
 
-  /**
-   * 换 Key。
-   *
-   * 选具体 Key 时**自动切到昨天**：当天上游尚未把用量归属到具体 Key（只返回一个
-   * `api_key: "unknown"` 的聚合分组），昨天才有单 Key 口径的数据。
-   */
+    // 换 Key：选具体 Key 时自动切到昨天 —— 当天上游只返回 `api_key: "unknown"` 的聚合分组，昨天才有单 Key 口径。
   const pickKey = (next: string): void => {
     if (next !== '' && state.day === 'today') {
       // 一次改两个字段，只打一次上游。
@@ -253,7 +207,7 @@ function renderUsageTab({ store, state, usage, t }: {
           ...DAY_OPTIONS.map((value) =>
             createElement('option', { key: value, value }, t(`qiniu.usage.day.${value}`)),
           ),
-          // 落在别的日期（配置或历史会话）上时补一个选项，避免 select 显示错乱。
+            // 落在别的日期上时补一个选项，避免 select 显示错乱。
           DAY_OPTIONS.includes(state.day as (typeof DAY_OPTIONS)[number])
             ? null
             : createElement('option', { key: state.day, value: state.day }, state.day),
@@ -278,7 +232,7 @@ function renderUsageTab({ store, state, usage, t }: {
             createElement(
               'option',
               { key: option.value, value: option.value },
-              // 只有明确"当日有归属、但没有它"才标无用量；`undefined` = 当天没有归属信息。
+                // 只有明确 hasUsage === false 才标无用量；undefined 表示当天没有归属信息。
               option.hasUsage === false
                 ? `${option.label}（${t('qiniu.empty.noUsage')}）`
                 : option.label,
@@ -368,7 +322,6 @@ function renderUsageTab({ store, state, usage, t }: {
   ]
 }
 
-/** 资源包栏：当月口径 + 逐包明细。 */
 function renderRespackTab({ store, state, respack, t }: {
   store: UsageStoreView
   state: UsageState
@@ -431,7 +384,6 @@ function renderRespackTab({ store, state, respack, t }: {
   ]
 }
 
-/** 单个数据源的错误条。 */
 function renderSourceError(error: SourceErrorView, t: Translate, key: string): ReactNode {
   return createElement(
     'div',

@@ -1,20 +1,9 @@
-/**
- * 插件配置：设置命名空间 `dsh-qiniu-usage` 的 schema 与归一化。
- *
- * 设计文档 §10.1。要点：
- *
- * - 配置里存的是凭据**引用名**（POSIX 环境变量名），不是 AK/SK 明文。
- *   明文只走凭据库或环境变量，绝不进插件配置文件。
- * - 所有字段都有默认值，schema 解析失败不应让插件整个挂掉。
- *
- * @module dsh-qiniu-usage/config
- */
+// 配置只存凭据引用名（POSIX 环境变量名），明文只走凭据库或环境变量；见 DESIGN.md §10.1。
 
 import z from 'schemastery'
 
-/** 用户可在设置页调整的插件配置。 */
 export interface Config {
-  /** 总开关。关闭时不注册任何路由、不发起任何上游请求。 */
+    /** 总开关；关闭时不注册路由、不发起上游请求。 */
   enabled?: boolean
 
   /** AccessKey 的凭据引用名（键名，非值）。 */
@@ -22,12 +11,7 @@ export interface Config {
   /** SecretKey 的凭据引用名（键名，非值）。 */
   secretKeyRef?: string
 
-  /**
-   * 可选的单 Key Bearer token 登记表。
-   *
-   * AK/SK 模式下用量接口返回账号下**全部** Key，所以常规筛选不需要它；
-   * 仅在用户恰好持有某个 `sk-`/`tk-` token、想精确查询单个 Key 时才需要。
-   */
+    /** 可选的单 Key Bearer token 登记表；AK/SK 模式已返回全部 Key，仅在持有 `sk-`/`tk-` token 想精确查单 Key 时才需要。 */
   apiKeys?: { label: string; tokenRef: string }[]
 
   /** 面板默认选中的 Key 标签；空串表示"全部 Key（汇总）"。 */
@@ -35,32 +19,17 @@ export interface Config {
   /** 面板默认日期：`today` / `yesterday` / `YYYY-MM-DD`。 */
   defaultDay?: string
 
-  /** 大模型用量接口基地址。 */
   usageBaseUrl?: string
-  /** 财务/资源包接口基地址。 */
   financeBaseUrl?: string
   /** 查询时区；上游只接受 IANA 名，不接受 `Local`。 */
   timezone?: string
 
-  /** 当天（小时粒度）数据的缓存 TTL，秒。 */
   todayTtlSec?: number
-  /** 历史日与资源包的缓存 TTL，秒。 */
   dashboardTtlSec?: number
-  /**
-   * 客户端自动刷新间隔，秒；`0` = 纯手动刷新。
-   *
-   * 默认 5 秒：侧栏卡片常驻，用户希望数字自己会动。上游当天数据本身有小时级
-   * 缓存（`todayTtlSec`，默认 60 秒），所以界面刷得快不等于上游被打得快 ——
-   * 宿主侧仍然只按 TTL 去上游取数。
-   */
+    /** 客户端自动刷新间隔（秒），`0` = 纯手动；默认 5 秒。界面刷得快不等于上游被打得快：宿主侧仍按 TTL 取数。 */
   pollIntervalSec?: number
 
-  /**
-   * 是否在左侧栏底部显示用量速览卡片。
-   *
-   * 默认开启：它是这个插件最主要的日常入口（左侧会话列表下方，Settings 行之上）。
-   * 不想要常驻卡片的用户可关掉，面板仍在「设置 → 七牛云用量」里。
-   */
+    /** 是否在左侧栏底部显示用量速览卡片；默认开启，它是本插件最主要的日常入口。 */
   sidebarCard?: boolean
 }
 
@@ -68,18 +37,12 @@ const DEFAULT_USAGE_BASE_URL = 'https://api.qnaigc.com'
 const DEFAULT_FINANCE_BASE_URL = 'https://api.qiniu.com'
 const DEFAULT_TIMEZONE = 'Asia/Shanghai'
 
-/** 默认自动刷新间隔（秒）；`0` 表示纯手动。 */
 const DEFAULT_POLL_INTERVAL_SEC = 5
 
 /** 设置命名空间；宿主与客户端半区必须一致。 */
 export const SETTINGS_NAMESPACE = 'dsh-qiniu-usage'
 
-/**
- * 配置 schema。
- *
- * `z.array(...).default([])` 在 schemastery 中会得到"可缺省的数组"，
- * 归一化时再兜一层，避免上游传进 `undefined`。
- */
+/** 配置 schema；`z.array().default([])` 在 schemastery 得到"可缺省的数组"，归一化时再兜一层。 */
 export const Config: z<Config> = z.object({
   enabled: z.boolean().default(true),
 
@@ -108,7 +71,7 @@ export const Config: z<Config> = z.object({
   sidebarCard: z.boolean().default(true),
 })
 
-/** 归一化后的配置：所有字段必有值，且 URL 已去掉尾部 `/`。 */
+/** 归一化后的配置：所有字段必有值，URL 已去掉尾部 `/`。 */
 export interface ResolvedConfig {
   enabled: boolean
   accessKeyRef: string
@@ -130,15 +93,7 @@ function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '')
 }
 
-/**
- * 把可能残缺的用户配置归一为完整配置。
- *
- * 对每个字段单独兜底（而不是依赖 schema 已跑过），这样 `installSection` 的
- * `setSource` 在设置服务缺失时也能安全调用。
- *
- * @param config - 原始配置，可为 `undefined`。
- * @returns 完整配置。
- */
+/** 把可能残缺的用户配置归一为完整配置；逐字段兜底，使 `installSection` 的 `setSource` 在设置服务缺失时也能安全调用。 */
 export function resolveConfig(config?: Config): ResolvedConfig {
   return {
     enabled: config?.enabled ?? true,

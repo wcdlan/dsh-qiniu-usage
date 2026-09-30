@@ -1,42 +1,17 @@
-/**
- * 客户端半区**依赖图**测试：用真实构建选项把 `src/client/index.ts` 打成
- * 浏览器 bundle，断言它真的打得出来。
- *
- * 为什么需要这个文件：`test/bundle.test.ts` 检查的是**磁盘上的产物**
- * （`lib/client.js`），而产物的时间戳可能早于源码 —— 源码改坏之后
- * `lib/client.js` 还是上一次构建留下的旧文件，测试照样全绿。真踩过：
- * `sumMonthRemain` 一度放在 `src/qiniu/respack.ts`，那里经由 `sign.ts`
- * 依赖 `node:crypto`，浏览器产物直接 `Could not resolve "node:crypto"`，
- * 但当时 `npm test` 是绿的（读的是旧产物），一直没发现，直到跑 `npm run build`。
- *
- * 所以这里**不读产物**，而是自己跑一次 esbuild —— 走的是
- * `scripts/build-options.mjs` 里构建脚本用的同一份选项，脚本改坏了这里也一起红。
- *
- * @module dsh-qiniu-usage/test/client-graph
- */
+import {strict as assert} from 'node:assert'
+import {dirname, resolve} from 'node:path'
+import {fileURLToPath} from 'node:url'
+import {build} from 'esbuild'
+import {describe, it} from 'vitest'
 
-import { strict as assert } from 'node:assert'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { build } from 'esbuild'
-import { describe, it } from 'vitest'
-
-import {
-  CLIENT_EXTERNALS,
-  clientBuildOptions,
-  wrapClientBundle,
-} from '../scripts/build-options.mjs'
+import {CLIENT_EXTERNALS, clientBuildOptions, wrapClientBundle,} from '../scripts/build-options.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 /** 只构建一次的共享结果：esbuild 虽快，但没必要每个用例都跑一遍。 */
 let cached: Promise<string> | undefined
 
-/**
- * 用构建脚本的选项把客户端入口打成 bundle。
- *
- * @returns 套好 ModuleLoader 外壳的产物源码。
- */
+// 用构建脚本的选项把客户端入口打成 bundle，并套好 ModuleLoader 外壳。
 function buildClientOnce(): Promise<string> {
   cached ??= (async () => {
     const result = await build(clientBuildOptions(root))
@@ -47,10 +22,11 @@ function buildClientOnce(): Promise<string> {
   return cached
 }
 
+// 不读磁盘产物，而是自己跑一次 esbuild（用构建脚本同一份选项）：产物可能比源码旧。
+// 真踩过：sumMonthRemain 一度放在 qiniu/respack.ts（→sign.ts→node:crypto），浏览器产物构建不出来，但 npm test 读旧产物、一路全绿。
 describe('客户端产出 · 依赖图', () => {
   it('宿主半区的 node 依赖不会渗进浏览器产物（能构建成功）', async () => {
-    // 断言点就是"不抛异常"：`node:crypto` 之类一旦被取值导入，esbuild 在
-    // platform=browser 下会以 `Could not resolve "node:crypto"` 直接失败。
+      // 断言点就是不抛异常：node:crypto 之类一旦被取值导入，esbuild 在 browser 平台直接 Could not resolve。
     const source = await buildClientOnce()
     assert.ok(source.length > 0, '产物不应为空')
   })
@@ -69,8 +45,7 @@ describe('客户端产出 · 依赖图', () => {
 
   it('产物里的外部模块请求都在白名单内', async () => {
     const source = await buildClientOnce()
-    // `noUncheckedIndexedAccess` 下 `m[1]` 是 `string | undefined`；捕获组必然
-    // 存在，用 `?? ''` 收敛类型（空串不可能命中白名单）。
+      // noUncheckedIndexedAccess 下 m[1] 是 string|undefined，用 ?? '' 收敛类型（空串不会命中白名单）。
     const requests = [
       ...new Set([...source.matchAll(/require\("([^"]+)"\)/g)].map((m) => m[1] ?? '')),
     ]
@@ -91,9 +66,8 @@ describe('客户端产出 · 依赖图', () => {
   })
 
   it('悬浮按钮的余量汇总住在浏览器半区，宿主模块不再导出它', async () => {
-    // 锁住上面那个坑的**修法**：纯展示函数留在 src/client/ 下，别放回
-    // qiniu/respack.ts（那里会牵出 node:crypto）。行为本身见
-    // test/respack-summary.test.ts。
+      // 锁住上面那个坑的修法：纯展示函数留在 src/client/ 下，别放回 qiniu/respack.ts（会牵出 node:crypto）。
+      // 行为本身见 test/respack-summary.test.ts。
     const clientSide = (await import('../src/client/respack-summary.ts')) as Record<string, unknown>
     assert.equal(typeof clientSide.sumMonthRemain, 'function', 'sumMonthRemain 必须在 client 半区')
 

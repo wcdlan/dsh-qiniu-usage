@@ -1,35 +1,19 @@
-/**
- * 资源包逐包明细：生命周期累计已用 / 总量、到期时间、按需下钻抵扣明细。
- *
- * 这是**生命周期口径**，与 {@link RespackMonth} 的当月口径是两回事，因此单独一张卡片
- * 并带自己的口径徽标（设计文档 §3.3 的提醒）。
- *
- * 布局：每行两段 —— 标题行（名称 + 状态徽标 + 已用/总量 + 百分比），明细行
- * （条形 + 到期/分配方式 + 下钻按钮）。包与包之间加分隔线，避免满宽条形图在视觉上
- * "串"到下一个包。已用完/已过期的包整体降透明度，而不是把 0 值藏起来。
- *
- * @module dsh-qiniu-usage/client/RespackPacks
- */
+// 逐包明细是生命周期累计口径，与 RespackMonth 的当月口径不同（见 DESIGN.md §3.3），单独一卡并带口径徽标。
+import {createElement, type ReactNode, useState} from 'react'
+import type {RespackDetail, RespackSnapshot} from '../qiniu/respack.ts'
+import {convertAmount, formatAmountPair, formatMonthDay, formatPercent} from './format.ts'
+import {barFillStyle, barTone, cls} from './styles.ts'
 
-import { createElement, useState, type ReactNode } from 'react'
-import type { RespackDetail, RespackSnapshot } from '../qiniu/respack.ts'
-import { convertAmount, formatAmountPair, formatMonthDay, formatPercent } from './format.ts'
-import { barFillStyle, barTone, cls } from './styles.ts'
-
-/** 翻译函数签名。 */
 type Translate = (key: string, params?: Record<string, unknown>) => string
 
-/** 组件属性。 */
 export interface RespackPacksProps {
   snapshot: RespackSnapshot
-  /** 已缓存的下钻结果，键为 `orderHash:poId`。 */
+    // 键为 `orderHash:poId`。
   details: Record<string, RespackDetail>
-  /** 请求下钻。 */
   onLoadDetail: (orderHash: string, poId: number) => void
   t: Translate
 }
 
-/** 到期文案：优先"还有 N 天"，已过期/无到期时间各有分支。 */
 function expiryText(pack: RespackSnapshot['packages'][number], t: Translate): string {
   if (pack.effectiveEnd === '') return ''
   if (pack.daysRemaining === undefined) {
@@ -39,7 +23,6 @@ function expiryText(pack: RespackSnapshot['packages'][number], t: Translate): st
   return t('qiniu.respack.expires', { days: pack.daysRemaining })
 }
 
-/** 下钻明细表。 */
 function renderDetail(detail: RespackDetail | undefined, t: Translate): ReactNode {
   if (detail === undefined) {
     return createElement(
@@ -94,12 +77,6 @@ function renderDetail(detail: RespackDetail | undefined, t: Translate): ReactNod
   )
 }
 
-/**
- * 逐包明细列表。
- *
- * @param props - 快照、下钻缓存、下钻回调与翻译函数。
- * @returns 列表元素；没有资源包时给出空状态。
- */
 export function RespackPacks({ snapshot, details, onLoadDetail, t }: RespackPacksProps): ReactNode {
   const [openPacks, setOpenPacks] = useState<Record<string, boolean>>({})
 

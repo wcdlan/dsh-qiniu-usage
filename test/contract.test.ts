@@ -1,23 +1,12 @@
-/**
- * 跨半区契约测试。
- *
- * 宿主半区与客户端半区是**两个独立 bundle**：客户端不能 import 宿主常量
- * （那会把宿主代码拖进浏览器），因此路由前缀、设置命名空间、分区 ID 这些
- * "两边都要写一遍"的字面量只能靠测试钉住一致性 —— 它们一旦漂移，表现是
- * "面板空白 / 404 / 读不到配置"，而不是编译错误。
- *
- * @module dsh-qiniu-usage/test/contract
- */
-
-import { strict as assert } from 'node:assert'
-import { existsSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { describe, it } from 'vitest'
-import { API_PREFIX as HOST_API_PREFIX, makeRoutes } from '../src/routes.ts'
-import { SETTINGS_NAMESPACE } from '../src/config.ts'
-import { API_PREFIX as CLIENT_API_PREFIX } from '../src/client/usage-store.ts'
+import {strict as assert} from 'node:assert'
+import {existsSync} from 'node:fs'
+import {readFile} from 'node:fs/promises'
+import {dirname, resolve} from 'node:path'
+import {fileURLToPath} from 'node:url'
+import {describe, it} from 'vitest'
+import {API_PREFIX as HOST_API_PREFIX, makeRoutes} from '../src/routes.ts'
+import {SETTINGS_NAMESPACE} from '../src/config.ts'
+import {API_PREFIX as CLIENT_API_PREFIX} from '../src/client/usage-store.ts'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -26,6 +15,7 @@ async function clientIndexSource(): Promise<string> {
   return readFile(resolve(root, 'src/client/index.ts'), 'utf8')
 }
 
+// 宿主与客户端是两个独立 bundle：前缀、命名空间、分区 ID 只能靠测试钉一致性，漂移表现是空白/404 而非编译错误。
 describe('跨半区契约 · 路由前缀', () => {
   it('客户端与宿主的 API 前缀一致', () => {
     assert.equal(
@@ -59,8 +49,7 @@ describe('跨半区契约 · 路由前缀', () => {
   })
 
   it('⚠ 不得有重复的 (kind, path) —— webServer 会拒绝，启动期直接崩', () => {
-    // 真实事故：/credentials 曾同时注册 GET 与 POST 两条路由，
-    // dsh web 启动即报 `webserver: duplicate exact route "/api/dsh-qiniu-usage/credentials"`。
+      // 真实事故：/credentials 曾同时注册 GET 与 POST，dsh web 启动即报 duplicate exact route。
     // WebRoute 没有 method 字段，方法分派必须写在 handler 内。
     const stub = {} as unknown as Parameters<typeof makeRoutes>[0]
     const routes = makeRoutes(stub)
@@ -139,22 +128,8 @@ describe('跨半区契约 · 设置命名空间与分区', () => {
 })
 
 describe('跨半区契约 · loader 装载形状（真实启动期踩过的坑）', () => {
-  /**
-   * 复刻 cordis-plugin-loader 的 `unwrapExports`：
-   *
-   * ```js
-   * exports = exports.default ?? exports;
-   * if (!exports.__esModule) return exports;
-   * return exports.default ?? exports;
-   * ```
-   *
-   * 宿主插件只要导出了 `default`，loader 就会拿到那个 `default` 而**丢掉整个模块
-   * 命名空间** —— `inject` 随之消失，启动期就报
-   * `cannot get property "webServer" without inject`。
-   *
-   * @param exports - 模块命名空间。
-   * @returns loader 实际会拿去当插件的值。
-   */
+    // 复刻 loader 的 unwrapExports：`exports.default ?? exports`，__esModule 时再剥一层。
+    // 导出 default 会丢掉整个命名空间（含 inject），启动期报 cannot get property "webServer" without inject。
   function unwrapExports(exports: unknown): unknown {
     if (exports === null || exports === undefined) return exports
     let value = (exports as { default?: unknown }).default ?? exports

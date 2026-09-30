@@ -1,34 +1,16 @@
-/**
- * 用量响应归一：三种 `data` 形态 → {@link UsageSnapshot}。
- *
- * 设计文档 §3.1 与 §6.1。三个关键决定：
- *
- * 1. **单位以响应里的 `unit` 字段为权威**。文档样例为 `kToken`，但真实值待确认，
- *    所以不硬编码：`kToken` → ×1000，`mToken`/`millionToken` → ×1e6，
- *    未识别的单位按 1:1 计数并记入 `warnings`。
- * 2. **区间汇总直接用 `items[].total`**，不去遍历 `categories[].values[]` 求和 ——
- *    与官方口径一致，也不会因为漏掉某个 categories 条目而算错。
- * 3. **形态判定不靠猜**：`data[]` 的元素带 `api_key` 即为形态 2；否则用调用方
- *    声明的鉴权方式区分形态 1 与 3（二者结构相同，只能靠鉴权方式分辨）。
- *
- * @module dsh-qiniu-usage/qiniu/usage
- */
+// 三种 `data` 形态 → UsageSnapshot（设计文档 §3.1 与 §6.1）。
 
-import type { RawItem, RawKeyGroup, RawModel, RawUsageData } from './types.ts'
+import type {RawItem, RawKeyGroup, RawModel} from './types.ts'
 
-/** 一个计费项归一后的形态。 */
 export interface UsageItem {
-  /** 原始计费项名（未识别时 UI 原样展示）。 */
+    /** 未识别时 UI 原样展示。 */
   name: string
-  /** 上游给出的单位原文。 */
   unit: string
-  /** 上游给出的原始数值（便于与官方控制台对数）。 */
+    /** 上游原始值，便于与官方控制台对数。 */
   totalRaw: number
-  /** 按 `unit` 换算成 token 数后的值。 */
   total: number
 }
 
-/** 按计费项名归类后的合计。 */
 export interface UsageTotalsByKind {
   input: number
   output: number
@@ -37,7 +19,6 @@ export interface UsageTotalsByKind {
   other: number
 }
 
-/** 单个模型的用量。 */
 export interface UsageModel {
   id: string
   name: string
@@ -46,77 +27,46 @@ export interface UsageModel {
   total: number
 }
 
-/** 一次用量查询的归一结果。 */
 export interface UsageSnapshot {
   source: 'bearer' | 'aksk'
-  /** Key 的展示标签（`name` 或掩码）。 */
   keyLabel: string
-  /** Key 的掩码形式；无可展示名时为空串。 */
+    /** 无可展示名时为空串。 */
   keyMasked: string
-  /** 上游给出的 `api_key`（**已是脱敏形式**，AK/SK 形态才有）。 */
+    /** 上游给的 `api_key`；**已是脱敏形式**，仅 AK/SK 形态才有。 */
   apiKey?: string
-  /**
-   * `true` 表示本次响应**完全没有 Key 归属**：上游把用量放在唯一的
-   * `api_key: "unknown"` 分组里（当天数据尚未归属到具体 Key）。
-   *
-   * 此时按 Key 筛选不可用 —— UI 应明确提示"以下为账号汇总"，而不是把
-   * 名称渲染成一串星号、或谎报"该 Key 当日无用量"。
-   */
+    /** 响应完全没有 Key 归属（当天 `api_key: "unknown"`）：按 Key 筛选不可用，UI 须提示"账号汇总"，不要渲染星号或谎报无用量。 */
   unattributedKeys?: true
-  /** 归一后的日期 `YYYY-MM-DD`。 */
   day: string
   granularity: 'day' | 'hour'
   range: { start: string; end: string; timezone: string }
   /** 按 `total` 降序。 */
   models: UsageModel[]
   totals: { input: number; output: number; total: number }
-  /**
-   * 水位线：小时粒度下最后一个**有数据**的时间桶。
-   * 用于提示"当天数据可能延迟"。
-   */
+    /** 水位线：小时粒度下最后一个**有数据**的时间桶，用于提示"当天数据可能延迟"。 */
   watermark?: string
   warnings: string[]
   fetchedAt: string
 }
 
-/** {@link normalizeUsage} 的入参。 */
 export interface NormalizeUsageInput {
-  /** 上游 `data` 字段。 */
   data: unknown
-  /** 本次查询的鉴权方式，用于消解形态 1 与 3 的歧义。 */
+    /** 鉴权方式，用于消解形态 1 与 3 的歧义。 */
   auth: 'bearer' | 'aksk'
-  /** 本次查询的参数（回填 range 与 day）。 */
   query: { granularity: 'day' | 'hour'; start: string; end: string; timezone: string }
-  /** 归一后的日期 `YYYY-MM-DD`。 */
   day: string
-  /** 无 `name` 可展示时使用的 Key 标签，例如 Bearer 模式下的 `当前 Key`。 */
+    /** 无 `name` 可展示时的 Key 标签，如 Bearer 模式下的 `当前 Key`。 */
   fallbackKeyLabel: string
-  /**
-   * 只保留某一个 Key：支持按 `api_key`、掩码或上游 `name` 匹配（大小写不敏感）。
-   * 省略或传空串表示**账号级汇总**（全部 Key 合并）。
-   */
+    /** 按 `api_key`、掩码或上游 `name` 匹配（大小写不敏感）；省略或空串表示账号级汇总。 */
   keySelector?: string
 }
 
-/** 未识别的单位：按 1:1 计数，并提示用户核对数量级。 */
+// 未识别的单位按 1:1 计数，并提示用户核对数量级。
 const UNKNOWN_UNIT = 1
 
-/**
- * 上游在"用量尚未归属到具体 Key"时给的占位 `api_key`。
- *
- * 实测（设计文档 §15.10）：查询**当天**时上游返回 `{"api_key":"unknown","name":""}`，
- * 全部用量挤在一个分组里；历史日期才会给出 `{"api_key":"sk-69*****03bf3","name":"dsh"}`
- * 这样的真实归属。所以 `unknown` 是**哨兵值而不是 Key**：拿它去打码只会得到
- * 一串无意义的星号，拿它当筛选条件也永远匹配不到东西。
- */
+// 上游"当天用量尚未归属"时的占位 `api_key`（实测，设计文档 §15.10）：它是哨兵值而非 Key，打码只会得到无意义星号，当筛选条件也永远匹配不到。
 const UNATTRIBUTED_API_KEY = 'unknown'
 
-/**
- * 取出上游 `api_key` 里**可用的 Key 身份**。
- *
- * @param apiKey - 上游 `data[].api_key`。
- * @returns 可用的 Key 身份（已去空白）；是占位值或空串时返回 `''`。
- */
+/** 取上游 `api_key` 里可用的 Key 身份（已去空白）；是占位值或空串时返回 `''`。 */
 export function keyIdentityOf(apiKey: unknown): string {
   if (typeof apiKey !== 'string') return ''
   const identity = apiKey.trim()
@@ -124,20 +74,7 @@ export function keyIdentityOf(apiKey: unknown): string {
   return identity
 }
 
-/**
- * 把上游的 `unit` 解析成"换算倍数 + 基础单位标签"。
- *
- * **必须先把分隔符归一掉**：上游真实返回的写法不止 `kToken`，实测资源包接口会给出
- * **`k/tokens`**（带斜杠）。原先只匹配 `ktoken(s)`，于是 `k/tokens` 落到"未识别"分支，
- * 界面显示成 `50K k/tokens` —— 实际值是 50,000 k/tokens = 50,000,000 tokens，两个量级
- * 叠在一起，用户会以为那是 5 万。
- *
- * 归一规则：去掉空白与 `/ _ - . · *` 等分隔符后小写化，再匹配。
- * 这样 `kToken` / `ktokens` / `KTokens` / `k/tokens` / `k tokens` 都归一到 `ktokens`。
- *
- * @param unit - 上游给出的单位原文。
- * @returns `{ factor, label }`；`undefined` 表示单位未被识别（如 `GB`）。
- */
+/** 解析 `unit` 为换算倍数 + 标签；必须先归一 `\s/_\-.·*` 分隔符 —— 实测资源包接口会给出 `k/tokens`，漏掉会把 50,000 k/tokens 显示成 50K，量级差两个数量级。 */
 export function parseUnit(unit: string): { factor: number; label: string } | undefined {
   const key = unit.trim().toLowerCase().replace(/[\s/_\-.·*]+/g, '')
   switch (key) {
@@ -169,17 +106,10 @@ export function parseUnit(unit: string): { factor: number; label: string } | und
   }
 }
 
-/**
- * 把上游的 `unit` 换算为 token 倍数。
- *
- * @param unit - 上游给出的单位。
- * @returns 倍数；`undefined` 表示单位未被识别。
- */
 export function unitMultiplier(unit: string): number | undefined {
   return parseUnit(unit)?.factor
 }
 
-/** 计费项归类：按名称关键字匹配。 */
 export function classifyItem(name: string): keyof UsageTotalsByKind {
   const n = name.toLowerCase()
   // 顺序敏感：先判缓存，再判输入 —— 缓存项名通常同时含"输入/Token"字样。
@@ -194,7 +124,7 @@ export function classifyItem(name: string): keyof UsageTotalsByKind {
   return 'other'
 }
 
-/** 取 item 的汇总原始值：优先 `total`，缺失时退回 values 求和。 */
+// 优先取 `total`（与官方口径一致），缺失时才退回 values 求和。
 export function itemTotalRaw(item: RawItem): number {
   if (typeof item.total === 'number' && Number.isFinite(item.total)) return item.total
   let sum = 0
@@ -214,7 +144,6 @@ export function itemTotalRaw(item: RawItem): number {
   return sum
 }
 
-/** 收集一个 model 下所有时间桶的时间戳。 */
 function collectTimes(model: RawModel): string[] {
   const times: string[] = []
   for (const item of model.items ?? []) {
@@ -233,7 +162,6 @@ function collectTimes(model: RawModel): string[] {
   return times
 }
 
-/** 归一单个模型。 */
 function normalizeModel(model: RawModel, warnings: Set<string>): UsageModel {
   const items: UsageItem[] = []
   const totalsByKind: UsageTotalsByKind = {
@@ -267,15 +195,11 @@ function normalizeModel(model: RawModel, warnings: Set<string>): UsageModel {
   }
 }
 
-/**
- * 判断一个 `data[]` 元素是否为形态 2 的每 Key 分组。
- */
 function isKeyGroup(value: RawModel | RawKeyGroup): value is RawKeyGroup {
   return typeof (value as RawKeyGroup).api_key === 'string'
     || Array.isArray((value as RawKeyGroup).models)
 }
 
-/** 把 `data` 归一为"每 Key 一组模型"的形态，供单 Key 与账号级两条路径共用。 */
 function toKeyGroups(data: unknown): RawKeyGroup[] {
   if (!Array.isArray(data)) return []
   return (data as (RawModel | RawKeyGroup)[]).map((entry) =>
@@ -283,7 +207,6 @@ function toKeyGroups(data: unknown): RawKeyGroup[] {
   )
 }
 
-/** 从分组里挑出匹配 `keySelector` 的那一组，支持按 api_key / 掩码 / 名称匹配。 */
 function findKeyGroup(
   groups: RawKeyGroup[],
   keySelector: string,
@@ -291,8 +214,7 @@ function findKeyGroup(
   const needle = keySelector.trim().toLowerCase()
   if (needle === '') return undefined
   return groups.find((group) => {
-    // 无归属的分组（`api_key: "unknown"`）不参与匹配：否则掩码后的 "*******"
-    // 会变成一个能选中、却永远筛不到东西的幽灵选项。
+      // 无归属分组（`api_key: "unknown"`）不参与匹配，否则掩码 "*******" 会变成一个永远筛不到东西的幽灵选项。
     const apiKey = keyIdentityOf(group.api_key)
     if (apiKey === '') return false
     const name = typeof group.name === 'string' ? group.name : ''
@@ -303,16 +225,7 @@ function findKeyGroup(
   })
 }
 
-/**
- * 把上游用量响应归一为 {@link UsageSnapshot}。
- *
- * 传 `keySelector` 时只保留匹配的那一个 Key（按 `api_key`、掩码或名称匹配）；
- * 不传则把全部 Key 的用量**合并**为账号级视图 —— 同名模型会相加，而不是并列
- * 出现两行。这正是 AK/SK 模式下"指定 Key"的实现方式：拉全账号 + 本地筛选。
- *
- * @param input - 原始 `data`、鉴权方式与查询元信息。
- * @returns 归一快照；`data` 不是数组时返回空快照。
- */
+/** 归一上游响应；传 `keySelector` 只保留匹配的那一个 Key，不传则把全部 Key 合并为账号级视图（同名模型相加，而非并列两行）。 */
 export function normalizeUsage(input: NormalizeUsageInput): UsageSnapshot {
   const { data, auth, query, day, fallbackKeyLabel, keySelector } = input
   const warnings = new Set<string>()
@@ -326,12 +239,10 @@ export function normalizeUsage(input: NormalizeUsageInput): UsageSnapshot {
     if (matched !== undefined) {
       groups = [matched]
     } else if (!unattributedKeys) {
-      // 真有归属、只是这个 Key 当日零用量：上游不会返回它 —— 这不是错误，
-      // 回落到空快照，由 UI 显示"无用量"（设计文档 §7.1 的已知边界）。
+        // 真有归属、只是这个 Key 当日零用量：上游不会返回它 —— 回落到空快照，由 UI 显示"无用量"（设计文档 §7.1）。
       groups = []
     }
-    // 否则：上游**没有给任何归属信息**（当天）。此时既筛不了、也不能谎报零用量
-    // —— 保留账号汇总，由 `unattributedKeys` 让 UI 明说"以下是汇总"。
+      // 否则：上游完全没给归属信息（当天），既筛不了也不能谎报零用量 —— 保留账号汇总，由 `unattributedKeys` 让 UI 明说。
   }
 
   const allTimes: string[] = []
@@ -378,9 +289,7 @@ export function normalizeUsage(input: NormalizeUsageInput): UsageSnapshot {
     totals.total += model.total
   }
 
-  // Key 标签：优先取上游给的 name，其次掩码，最后调用方给的兜底标签。
-  // 无归属的 `unknown` 分组在这里被 keyIdentityOf 归零，于是自然落到兜底标签
-  // （「全部 Key」）——而不是渲染成 "*******"。
+    // Key 标签优先 name、次掩码、末兜底；`unknown` 分组经 keyIdentityOf 归零后自然落到兜底（「全部 Key」），而不是渲染成 "*******"。
   const first = groups[0]
   const firstIdentity = keyIdentityOf(first?.api_key)
   const firstName = typeof first?.name === 'string' ? first.name.trim() : ''
@@ -410,36 +319,14 @@ export function normalizeUsage(input: NormalizeUsageInput): UsageSnapshot {
   }
 }
 
-/**
- * 掩码化一个 API Key：保留前 5 位与后 2 位。
- *
- * 设计文档 §11.3：日志与界面里的 Key 一律掩码。
- *
- * **上游给的 `api_key` 本身就已经是脱敏值**（实测格式 `sk-69*****03bf3`，
- * 即 `前5位*****后5位`）。对已含 `*` 的值再打一次码只会把上游的后 5 位削成
- * 2 位、把可读信息越改越少，所以这里原样返回。
- *
- * @param key - 原始或已脱敏的 Key。
- * @returns 掩码后的 Key；过短时整体打码。
- */
+/** 掩码化：保留前 5 位与后 2 位；入参已含 `*` 时原样返回 —— 上游给的 `api_key` 本身已是 `前5位*****后5位`，再打一次码只会把可读信息越改越少（设计文档 §11.3）。 */
 export function maskApiKey(key: string): string {
   if (key.includes('*')) return key
   if (key.length <= 8) return '*'.repeat(key.length)
   return `${key.slice(0, 5)}*****${key.slice(-2)}`
 }
 
-/**
- * 从用量响应中提取 Key 清单（供 `/keys` 名册使用）。
- *
- * **跳过无归属的分组**：`api_key: "unknown"` 是"当天尚未归属"的占位值，不是
- * 一个可选的 Key（设计文档 §15.10）。
- *
- * **已知边界**：窗口内零用量的 Key 不会出现在上游响应里，因此只能枚举"有用量"的
- * Key —— 其余由用户在配置里登记名称。见设计文档 §7.1。
- *
- * @param data - 上游 `data` 字段。
- * @returns 每个出现过的 Key 的名称、掩码与身份。
- */
+/** 提取 Key 名册（供 `/keys` 用）：跳过 `unknown` 占位分组。已知边界：窗口内零用量的 Key 不出现在上游响应里，只能枚举有用量的 Key（设计文档 §7.1、§15.10）。 */
 export function extractUsageKeys(data: unknown): { apiKey: string; masked: string; name?: string }[] {
   if (!Array.isArray(data)) return []
   const seen = new Map<string, { apiKey: string; masked: string; name?: string }>()

@@ -1,59 +1,26 @@
-/**
- * 侧栏速览卡片：坐在左侧列表下方（Settings 行之上）、形态对齐宿主自带的
- * 「今日用量」卡片的一块常驻入口。
- *
- * 为什么不再是对话页的悬浮按钮：浮层要用户先找到、还挡住内容；左侧栏是每天都会
- * 扫一眼的地方，宿主自己的用量速览也在那里。挂载方式见 `sidebar-mount.tsx`。
- *
- * 三种形态（展开状态记忆在 `localStorage`，默认**收起**）：
- *
- * 1. 收起 —— 一行速览：图标 + 「今日用量」 + 今天的总量；
- * 2. 展开 —— 只放**缩略信息**：前 {@link MODEL_PREVIEW_COUNT} 个模型的用量条，
- *    以及一行「其余 N 个模型合计」；侧栏只有 280px 宽，多了就是噪音；
- * 3. 详情 —— 展开后才有「详情」按钮，点开 `UsageDetailDialog`（资源包等
- *    详细包信息都在那里）。侧栏里塞不下逐包明细，所以刻意分成两层。
- *
- * 取数周期挂在挂载上：卡片常驻，`start()` 只在挂载时跑一次，之后按配置的
- * `pollIntervalSec` 轮询（默认 0 = 纯手动，展开态里有「刷新」）。
- *
- * @module dsh-qiniu-usage/client/SidebarUsageCard
- */
+// 侧栏速览卡片：常驻入口，挂载方式见 sidebar-mount.tsx。展开状态记忆在 localStorage，默认收起。
+import {createElement, type ReactNode, useEffect, useState, useSyncExternalStore,} from 'react'
+import {createPortal} from 'react-dom'
+import type {UsageModel} from '../qiniu/usage.ts'
+import {UsageDetailDialog} from './UsageDetailDialog.tsx'
+import {readCardExpanded, writeCardExpanded} from './card-prefs.ts'
+import {formatClock, formatPercent, formatTokens, truncate} from './format.ts'
+import {cls, PANEL_CSS} from './styles.ts'
+import type {UsageStoreView} from './usage-store.ts'
 
-import {
-  createElement,
-  useEffect,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-} from 'react'
-import { createPortal } from 'react-dom'
-import type { UsageModel } from '../qiniu/usage.ts'
-import { UsageDetailDialog } from './UsageDetailDialog.tsx'
-import { readCardExpanded, writeCardExpanded } from './card-prefs.ts'
-import { formatClock, formatPercent, formatTokens, truncate } from './format.ts'
-import { cls, PANEL_CSS } from './styles.ts'
-import type { UsageStoreView } from './usage-store.ts'
-
-/** 翻译函数签名。 */
 type Translate = (key: string, params?: Record<string, unknown>) => string
 
-/** 展开态里最多预览几个模型。 */
+/** 展开态最多预览的模型数。 */
 export const MODEL_PREVIEW_COUNT = 3
 
-/** 组件属性。 */
 export interface SidebarUsageCardProps {
   store: UsageStoreView
   t: Translate
-  /**
-   * 初始是否展开。
-   *
-   * 仅用于视觉预览与测试：SSR 出来的静态 HTML 没有事件处理器，无法靠"点一下"
-   * 得到展开态截图，只能一开始就渲染成展开的。缺省时读 `localStorage`。
-   */
+    // 仅用于视觉预览与测试：SSR 静态 HTML 无法靠"点一下"得到展开态截图。缺省时读 localStorage。
   initialExpanded?: boolean
 }
 
-/** 卡片上的小图标（内联 SVG，避免引入图标库）。 */
+/** 内联 SVG，避免引入图标库。 */
 function UsageIcon(): ReactNode {
   return createElement(
     'svg',
@@ -71,7 +38,7 @@ function UsageIcon(): ReactNode {
   )
 }
 
-/** 展开/收起箭头：收起时朝上（点开），展开时朝下（点收）。 */
+/** 箭头：收起时朝上（点开），展开时朝下（点收）。 */
 function ChevronIcon({ collapsed }: { collapsed: boolean }): ReactNode {
   return createElement(
     'svg',
@@ -91,18 +58,10 @@ function ChevronIcon({ collapsed }: { collapsed: boolean }): ReactNode {
   )
 }
 
-/**
- * 总量文本（收起态的一行速览与展开态的标题行共用）。
- *
- * @param total - 今日总量；`undefined` 表示还没有数据。
- * @param unitText - 单位后缀，默认 `tokens`。
- * @returns 展示文本。
- */
 function summaryText(total: number | undefined): string {
   return total === undefined ? '—' : `${formatTokens(total)} tokens`
 }
 
-/** 单个模型的预览行：名字 + 数值 + 占比条。 */
 function renderModelRow(model: UsageModel, grandTotal: number): ReactNode {
   const fraction = grandTotal > 0 ? model.total / grandTotal : 0
   return createElement(
@@ -129,12 +88,6 @@ function renderModelRow(model: UsageModel, grandTotal: number): ReactNode {
   )
 }
 
-/**
- * 侧栏速览卡片。
- *
- * @param props - store、翻译函数与初始展开态。
- * @returns 卡片元素。
- */
 export function SidebarUsageCard({ store, t, initialExpanded }: SidebarUsageCardProps): ReactNode {
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
   const [expanded, setExpanded] = useState<boolean>(() =>
@@ -142,7 +95,7 @@ export function SidebarUsageCard({ store, t, initialExpanded }: SidebarUsageCard
   )
   const [detailOpen, setDetailOpen] = useState(false)
 
-  // 卡片常驻：挂载即取数，卸载即停（离开页面就零请求）。
+    // 卡片常驻：挂载即取数，卸载即停。
   useEffect(() => {
     store.actions.start()
     return () => {
@@ -159,20 +112,14 @@ export function SidebarUsageCard({ store, t, initialExpanded }: SidebarUsageCard
 
   const usage = state.data?.usage ?? null
   const total = usage?.totals.total
-  // 'idle' 是挂载后、effect 跑起来之前的那一帧：也算加载中，别闪一下错误态。
+    // 'idle' 是挂载后、effect 跑起来之前那一帧：也算加载中，别闪错误态。
   const loading = state.data === null && state.status !== 'error'
-  /**
-   * 用量这一路是不是坏了。
-   *
-   * 分两种情况：整份载荷都取不到（`data === null` + error），或载荷到了但用量那一路
-   * 报错（资源包成功、用量失败是很常见的组合）。两者都不该在展开态里显示成
-   * "当日没有用量记录" —— 那是在说谎。
-   */
+    // 用量这一路是否坏了：整份载荷取不到，或载荷到了但用量那一路报错（资源包成功、用量失败很常见）。
+    // 两种情况都不该在展开态显示成"当日没有用量记录"。
   const usageErrored = state.data === null
     ? state.status === 'error'
     : state.data.errors.some((error) => error.source === 'usage')
-  // 宿主半区没在服务（路由 404，通常是插件被 `enabled: false` 关掉了）：整块退场，
-  // 而不是在侧栏底部钉一条永远好不了的报错。设置页里仍能看到原因。
+    // 宿主半区路由 404（通常是插件被 enabled:false 关掉）：整块退场，不在侧栏钉一条永远好不了的报错。
   if (state.data === null && state.status === 'error' && /404/.test(state.error ?? '')) {
     return null
   }
@@ -184,17 +131,13 @@ export function SidebarUsageCard({ store, t, initialExpanded }: SidebarUsageCard
   const rest = models.slice(MODEL_PREVIEW_COUNT)
   const restTotal = rest.reduce((sum, model) => sum + model.total, 0)
   const toggleLabel = t(expanded ? 'qiniu.card.collapse' : 'qiniu.card.expand')
-  /**
-   * 卡片标题跟随**详情弹窗里的筛选**（两者共用一个 store）：
-   * 选了昨天就写「昨日用量」，筛了单个 Key 就补上 Key 名 —— 否则卡片上的数字
-   * 会让人以为是账号总量。
-   */
+    // 标题跟随详情弹窗里的筛选（共用一个 store），否则卡片数字会让人以为是账号总量。
   const title = [
     state.day === 'yesterday' ? t('qiniu.card.yesterday') : t('qiniu.card.today'),
     ...(state.key === '' ? [] : [state.key]),
   ].join(' · ')
 
-  /** 右上角的箭头按钮：与主按钮互为兄弟（按钮不能嵌套按钮）。 */
+    // 右上角箭头按钮：与主按钮互为兄弟（按钮不能嵌套按钮）。
   const toggleButton = createElement(
     'button',
     {
@@ -221,7 +164,6 @@ export function SidebarUsageCard({ store, t, initialExpanded }: SidebarUsageCard
       'div',
       { className: cls.sideBody },
 
-      // 主按钮：整块可点，点它就是展开/收起。
       createElement(
         'button',
         {
@@ -249,7 +191,6 @@ export function SidebarUsageCard({ store, t, initialExpanded }: SidebarUsageCard
             ),
       ),
 
-      // 展开态：只放缩略信息 —— 模型用量。
       expanded
         ? createElement(
             'div',
@@ -280,7 +221,6 @@ export function SidebarUsageCard({ store, t, initialExpanded }: SidebarUsageCard
           )
         : null,
 
-      // 展开态的动作行：详情（弹窗）+ 刷新 + 更新时间。
       expanded
         ? createElement(
             'div',
@@ -316,10 +256,9 @@ export function SidebarUsageCard({ store, t, initialExpanded }: SidebarUsageCard
         : null,
     ),
 
-    // 展开/收起箭头：始终渲染，收起时朝上、展开时朝下。
     toggleButton,
 
-    // 详情弹窗走 portal 挂到 body：侧栏宽度裁不住它，也不受列表滚动容器影响。
+      // 详情弹窗走 portal 挂到 body：不被侧栏宽度裁掉，也不受列表滚动容器影响。
     detailOpen && typeof document !== 'undefined'
       ? createPortal(
           createElement(UsageDetailDialog, {

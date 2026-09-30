@@ -1,33 +1,14 @@
 /**
- * 视觉预览：把面板渲染成 HTML，供 headless Chrome 截图查看。
- *
- * 生成五份：设置页、侧栏卡片（收起 / 展开）、详情弹窗的两个栏目。
- * 侧栏那两份是**模拟 shell 侧栏**渲染的（会话列表 + 宿主自带的「今日用量」速览卡
- * + 我们的卡片 + 设置行），因为卡片的高度、间距、截断只有在真实宽度下才看得出来。
- *
- * 用途：改样式时能**真的看到**效果，而不是盲改 CSS。开发期工具，不参与构建产物。
- *
- * ```bash
- * node scripts/preview.mjs                    # 生成 .tmp/preview.html
- * node scripts/preview.mjs --theme light      # 换浅色主题再生成（默认 dark）
- * # 再用 Chrome 截图：
- * #   --window-size=820,1600  --screenshot=out.png  file://.../.tmp/preview.html
- * ```
- *
- * URL 参数（调试用）：
- * - `?w=420`  —— 把模拟面板宽度固定为 420px。
- *   必须用参数而不是 `--window-size`：Chrome 会把窗口宽度夹到最小值（约 500px），
- *   若按更小的 window-size 出图，只会把右侧**裁掉**，看起来像布局溢出，实为假象。
- * - `?diag=1` —— 在页面顶部显示溢出诊断（哪个元素超出了面板宽度）。
- * - `.tmp/preview-keyed.html` —— 选中单个 Key、当天上游未归属的提示态。
+ * 视觉预览：把面板渲染成 HTML 供 headless Chrome 截图。开发期工具，不参与构建产物。
+ * URL 参数：`?w=<px>` 固定面板宽度（见下方 shell CSS 注释），`?diag=1` 显示溢出诊断。
  *
  * @module dsh-qiniu-usage/scripts/preview
  */
 
-import { build } from 'esbuild'
-import { mkdir, writeFile } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import {build} from 'esbuild'
+import {mkdir, writeFile} from 'node:fs/promises'
+import {dirname, resolve} from 'node:path'
+import {fileURLToPath} from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const tmp = resolve(root, '.tmp')
@@ -39,15 +20,9 @@ const detailHtmlPath = resolve(tmp, 'preview-detail.html')
 const detailPacksHtmlPath = resolve(tmp, 'preview-detail-packs.html')
 
 /**
- * 预览主题 token（`--dsw-alias-*` 只写后缀名）。
- *
- * - `dark` —— 调校过的近似值：观感贴近宿主暗色真机，也不随上游 token 改名漂移；
- * - `light` —— 直接采用宿主真实 token（取自宿主 bundle 里 `body` 规则的
- *   `--dsw-alias-*` 定义），因为浅色下卡片靠「白底 + 极淡描边」分层，
- *   近似值会糊成一片。
- *
- * `pageBg` / `sidebarBg` 等不是宿主 token，而是预览自己的舞台布景，只求与卡片
- * 之间有一层浅浅的分离。
+ * 预览主题 token（`--dsw-alias-*` 只写后缀名）。dark 用调校过的近似值以免随上游改名漂移；
+ * light 采用宿主真实 token（浅色靠白底 + 极淡描边分层，近似值会糊成一片）。
+ * `pageBg` / `sidebarBg` 等是预览自己的舞台布景，非宿主 token。
  */
 const THEMES = {
   dark: {
@@ -97,8 +72,7 @@ const THEMES = {
       'bg-layer-2': '#ffffff',
       'bg-layer-3': '#ffffff',
       'bg-overlay': '#e9ecf2',
-      // 宿主没有 `--dsw-alias-bg-mask`（只有 mask-1/2/3），真实运行时用的是插件
-      // CSS 里的兜底值，这里照抄兜底值，遮罩浓度才与真机一致。
+        // 宿主没有 `--dsw-alias-bg-mask`（只有 mask-1/2/3），照抄插件 CSS 的兜底值，遮罩浓度才与真机一致。
       'bg-mask': 'rgba(0, 0, 0, .38)',
       'border-l1': '#0000000a',
       'border-l2': '#0000001a',
@@ -114,22 +88,10 @@ const THEMES = {
   },
 }
 
-/**
- * 取某个主题的配置（未知主题回落到 `dark`）。
- *
- * @param theme - `dark` 或 `light`。
- * @returns 主题配置。
- */
 function themeOf(theme) {
   return THEMES[theme] ?? THEMES.dark
 }
 
-/**
- * 把主题 token 拼成 `:root { … }` 规则。
- *
- * @param theme - `dark` 或 `light`。
- * @returns CSS 文本。
- */
 function themeBlock(theme) {
   const tokens = themeOf(theme)
   const vars = Object.entries(tokens.vars)
@@ -138,7 +100,7 @@ function themeBlock(theme) {
   return `:root {\n    color-scheme: ${tokens.scheme};\n    ${vars}\n  }`
 }
 
-/** 把预览入口打成 Node 可执行的 ESM（react 走 node_modules，不打进包）。 */
+/** 把预览入口打成 Node 可执行的 ESM：react 走 node_modules，不打进包。 */
 async function buildPreview() {
   await build({
     entryPoints: [resolve(root, 'scripts/preview-entry.tsx')],
@@ -154,17 +116,8 @@ async function buildPreview() {
 }
 
 /**
- * 侧栏视图：模拟 shell 的左侧栏（会话列表 + 底部区域），把卡片放进真实位置。
- *
- * 底部区域里刻意复刻了宿主自带的「今日用量」速览卡：两张卡片的圆角、底色、
- * 字号、留白是否协调，一眼就能比出来。顺序也照实排：真实运行时
- * `@linxin666/dsh-usage` 的卡坚持紧邻 Settings 行，所以稳定后是"我们的卡在上、
- * 宿主的卡在下"。
- *
- * @param cardHtml - 卡片的静态 HTML。
- * @param options - `expanded` 用于标题；`dialogHtml` 非空时叠一层详情弹窗；
- *   `theme` 选 `dark` / `light`。
- * @returns 完整 HTML 文档。
+ * 侧栏视图：模拟 shell 左侧栏，把卡片放进真实位置 —— 卡片的高度、间距、截断只有在真实
+ * 宽度下才看得出来；底部复刻宿主自带的「今日用量」速览卡，便于两张卡并排对比。
  */
 function wrapSidebarDocument(cardHtml, options = {}) {
   const theme = themeOf(options.theme)
@@ -223,7 +176,7 @@ ${options.dialogHtml ?? ''}
 `
 }
 
-/** 包一层宿主设置页那样的容器（主题 token 见 `THEMES`）。 */
+/** 包一层宿主设置页那样的容器。 */
 function wrapDocument(panelHtml, options = {}) {
   const theme = themeOf(options.theme)
   return `<!doctype html>
@@ -238,8 +191,8 @@ function wrapDocument(panelHtml, options = {}) {
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
     -webkit-font-smoothing: antialiased;
   }
-  /* 模拟设置页右侧内容区：宽度由 ?w= 决定，缺省占满窗口。
-     用容器宽度而不是窗口宽度来测窄布局，可绕开 Chrome 的最小窗口宽度限制。 */
+  /* 模拟设置页右侧内容区：宽度由 ?w= 决定，缺省占满窗口。用容器宽度而非 --window-size
+     测窄布局：Chrome 会把窗口宽度夹到约 500px，更小的 window-size 只会裁掉右侧，像溢出实为假象。 */
   .shell { padding: 20px; background: var(--dsw-alias-bg-base); min-height: 100vh; box-sizing: border-box; }
 </style>
 </head>
@@ -281,7 +234,7 @@ function wrapDocument(panelHtml, options = {}) {
 }
 
 async function main() {
-  // 主题：默认暗色（与历史一致）；`--theme light` 出浅色一套，供 README 截图用。
+    // 默认暗色；`--theme light` 供 README 浅色截图用。
   const themeArg = process.argv.indexOf('--theme')
   const theme = themeArg === -1 ? 'dark' : (process.argv[themeArg + 1] ?? 'dark')
   if (theme !== 'dark' && theme !== 'light') {
@@ -297,7 +250,6 @@ async function main() {
   await writeFile(htmlPath, wrapDocument(panelHtml, { theme }), 'utf8')
   console.log(`预览已生成：${htmlPath}（${theme}）`)
 
-  // 侧栏卡片：收起态（默认）与展开态各出一张，放在模拟的侧栏里。
   const collapsed = await mod.renderSidebarCard({ expanded: false })
   await writeFile(cardHtmlPath, wrapSidebarDocument(collapsed, { theme }), 'utf8')
   console.log(`预览已生成：${cardHtmlPath}`)
@@ -306,7 +258,7 @@ async function main() {
   await writeFile(cardExpandedHtmlPath, wrapSidebarDocument(expanded, { expanded: true, theme }), 'utf8')
   console.log(`预览已生成：${cardExpandedHtmlPath}`)
 
-  // 详情弹窗：叠在侧栏视图之上，检验遮罩与居中。两个栏目各一张。
+    // 详情弹窗叠在侧栏视图之上，检验遮罩与居中；两个栏目各一张。
   const dialog = await mod.renderDetailDialog({ tab: 'usage' })
   await writeFile(
     detailHtmlPath,

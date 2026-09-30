@@ -1,29 +1,18 @@
 /**
- * 生成 README 用的界面截图。
+ * 生成 README 用的界面截图：跑 preview.mjs（明 / 暗各一套）→ headless Chrome 按
+ * **元素盒子**裁剪、2x 重栅格化 → 写进 `img/`，浅色图带 `-light` 后缀。产物参与 git，
+ * 脚本本身不进构建、也不进 npm 包。
  *
- * 流程：跑 `preview.mjs`（明 / 暗各一套）→ 用 headless Chrome 按**元素盒子**裁剪、
- * 2x 重栅格化 → 写进 `img/`。浅色图带 `-light` 后缀，README 用 `<picture>` 按
- * 读者的 GitHub 主题二选一。
- *
- * ```bash
- * node scripts/screenshots.mjs                 # 明 + 暗，共 8 张
- * node scripts/screenshots.mjs --theme dark    # 只出一套
- * CHROME_PATH=/path/to/chrome node scripts/screenshots.mjs
- * ```
- *
- * 为什么走 CDP 而不是 `chrome --screenshot`：只有 CDP 能按元素盒子裁剪并 2x
- * 重栅格化，拿到的是"只有这块 UI"的干净图，而不是整页图再靠 Pillow 找边界。
- *
- * 产物是静态资源，参与 git；脚本本身不参与构建、也不进 npm 包（`files` 只放
- * `img`）。
+ * 走 CDP 而非 `chrome --screenshot`：只有它能按元素盒子裁剪并 2x 重栅格化，得到"只有
+ * 这块 UI"的干净图，而不是整页图再靠 Pillow 找边界。
  *
  * @module dsh-qiniu-usage/scripts/screenshots
  */
 
-import { spawn } from 'node:child_process'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import {spawn} from 'node:child_process'
+import {mkdir, readFile, rm, writeFile} from 'node:fs/promises'
+import {dirname, resolve} from 'node:path'
+import {fileURLToPath} from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const previewScript = resolve(root, 'scripts', 'preview.mjs')
@@ -31,7 +20,7 @@ const tmp = resolve(root, '.tmp')
 const outDir = resolve(root, 'img')
 const chromePath = process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 
-/** 每张图：打开哪个预览页、裁剪哪个元素、四周留多少白。 */
+/** 每张图打开的预览页、裁剪元素与留白。 */
 const SHOTS = [
   { url: 'preview.html?w=760', name: 'settings', box: 'panel', pad: 20, title: '设置分区' },
   { url: 'preview-card-expanded.html', name: 'sidebar-card', box: '[data-dsh-part="sidebar-card"]', pad: 0, title: '侧栏速览卡片' },
@@ -80,13 +69,8 @@ class Session {
 }
 
 /**
- * 取目标元素的页面坐标盒子（含滚动偏移）。
- *
- * `panel` 不是选择器：设置页那版把面板渲染在 `#shell` 里，取全部子元素的并集，
- * 免得依赖面板内部的类名。
- *
- * @param selector - CSS 选择器，或字面量 `panel`。
- * @returns 求值用的 JS 表达式。
+ * 取目标元素的页面坐标盒子（含滚动偏移）。`panel` 不是选择器：设置页那版渲染在
+ * `#shell` 里，取全部子元素的并集，免得依赖面板内部类名。
  */
 const boxExpr = (selector) => (selector === 'panel'
   ? `(() => {
@@ -105,13 +89,11 @@ const boxExpr = (selector) => (selector === 'panel'
       return JSON.stringify({ x: b.left, y: b.top, width: b.width, height: b.height });
     })()`)
 
-/** 求值一段返回 JSON 字符串的表达式。 */
 async function evaluate(session, expression) {
   const { result } = await session.send('Runtime.evaluate', { expression, returnByValue: true })
   return JSON.parse(result.value)
 }
 
-/** 量出裁剪盒子：元素位置 + 四周留白，裁进页面左上角以内。 */
 async function measure(session, selector, pad) {
   const box = await evaluate(session, boxExpr(selector))
   if (box === null) throw new Error(`预览页里找不到元素：${selector}`)
@@ -124,7 +106,6 @@ async function measure(session, selector, pad) {
   }
 }
 
-/** 跑 `preview.mjs --theme <theme>`，生成预览 HTML。 */
 function buildPreviews(theme) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(process.execPath, [previewScript, '--theme', theme], { stdio: ['ignore', 'ignore', 'inherit'] })
@@ -132,7 +113,6 @@ function buildPreviews(theme) {
   })
 }
 
-/** 启动 headless Chrome，返回进程与调试端口。 */
 async function launchChrome() {
   const profile = resolve(tmp, 'chrome-screenshots')
   await rm(profile, { recursive: true, force: true })
@@ -173,12 +153,6 @@ async function launchChrome() {
   throw new Error('headless Chrome 没起来（端口文件一直是空的）')
 }
 
-/**
- * 截一套主题的图。
- *
- * @param session - 已连接的 CDP 会话。
- * @param theme - `dark` 或 `light`。
- */
 async function capture(session, theme) {
   const suffix = theme === 'dark' ? '' : `-${theme}`
   for (const shot of SHOTS) {
@@ -187,7 +161,7 @@ async function capture(session, theme) {
     const loaded = session.once('Page.loadEventFired')
     await session.send('Page.navigate', { url })
     await loaded
-    // 预览页没有异步数据，但字体加载与布局稳定需要一帧。
+      // 预览页无异步数据，但字体加载与布局稳定需要一帧。
     await new Promise((r) => setTimeout(r, 300))
 
     const clip = await measure(session, shot.box, shot.pad)
