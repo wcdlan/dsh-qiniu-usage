@@ -21,7 +21,9 @@ import { describe, it } from 'vitest'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { UsageSection, type UsageSectionProps } from '../src/client/UsageSection.tsx'
-import { FloatingPanel, FloatingUsage } from '../src/client/FloatingUsage.tsx'
+import { SidebarUsageCard, MODEL_PREVIEW_COUNT } from '../src/client/SidebarUsageCard.tsx'
+import { UsageDetailDialog } from '../src/client/UsageDetailDialog.tsx'
+import { formatTokens } from '../src/client/format.ts'
 import { cls } from '../src/client/styles.ts'
 import { zh } from '../src/client/locales.ts'
 import { createUsageStore } from '../src/client/usage-store.ts'
@@ -146,46 +148,30 @@ function makeClientFetch(options: {
 }
 
 /**
- * 造一个已加载完数据的 store 并渲染面板。
+ * 造一个 store 并渲染设置页。
  *
- * SSR 不执行 `useEffect`，所以这里显式驱动 store 取数。
+ * SSR 不执行 `useEffect`，所以这里显式驱动凭据那条支线（设置页只读它）。
  *
- * @param options - 取数行为与是否传入注入面。
+ * @param options - 是否传入注入面、是否带设置作用域。
  * @returns 渲染出的 HTML。
  */
 async function renderSection(options: {
-  failUsage?: boolean
-  emptyUsage?: boolean
-  unattributedUsage?: boolean
-  keys?: KeysPayload['keys']
-  /** 渲染前先选中的 Key（会触发一次按 Key 的重新取数）。 */
-  key?: string
-  start?: boolean
+  /** 注入的设置作用域替身。 */
+  settings?: { getSnapshot(): { value?: { pollIntervalSec?: number } }; subscribe(fn: () => void): () => void; set?(f: string, v: unknown): Promise<boolean> }
   omitStore?: boolean
 } = {}): Promise<string> {
-  const store = createUsageStore({ fetchImpl: makeClientFetch(options) })
-  if (options.start !== false) {
-    store.actions.start()
-    store.actions.loadKeys()
-    // 等到出现终态（ready 或 error）。
-    await waitFor(() => {
-      const status = store.getSnapshot().status
-      return status === 'ready' || status === 'error'
-    })
-    // Key 清单是另一条异步支线，等它落地再渲染。
-    if ((options.keys ?? []).length > 0) {
-      await waitFor(() => store.getSnapshot().keys.length > 0)
-    }
-    if (options.key !== undefined) {
-      store.actions.setKey(options.key)
-      await waitFor(() => store.getSnapshot().status === 'ready')
-    }
-  }
+  const store = createUsageStore({ fetchImpl: makeClientFetch() })
+  store.actions.loadCredentials()
+  await waitFor(() => store.getSnapshot().credentials !== null)
 
   // ⚠ 关键：注入面的成员是**摊平**成 props 的，不是 { face } 包装。
   const props: UsageSectionProps = options.omitStore === true
     ? ({} as UsageSectionProps)
-    : { store, t: translate }
+    : {
+        store,
+        t: translate,
+        ...(options.settings === undefined ? {} : { settings: options.settings as never }),
+      }
 
   return renderToStaticMarkup(createElement(UsageSection, props))
 }
@@ -199,41 +185,62 @@ async function waitFor(predicate: () => boolean): Promise<void> {
   }
 }
 
-describe('面板渲染 · 注入面摊平成 props', () => {
+describe('设置页渲染 · 只做配置与自检', () => {
   it('渲染出分区标题（而不是空白）', async () => {
     const html = await renderSection()
     assert.ok(html.length > 0, '渲染结果不应为空')
     assert.ok(html.includes('七牛云用量'), `应出现标题，实际 HTML：${html.slice(0, 200)}`)
   })
 
-  it('有数据时渲染模型名、合计与资源包', async () => {
+  it('不再渲染用量/资源包内容，也不再放说明性卡片', async () => {
     const html = await renderSection()
 
-    // 用量表：模型显示名 + 汇总
-    assert.ok(html.includes('DeepSeek V4 Pro'), '应渲染模型显示名')
-    assert.ok(html.includes('Qwen Max'), '应渲染第二个模型')
-    assert.ok(html.includes('2.08M'), `应渲染合计 tokens，实际：${html.slice(0, 400)}`)
-    assert.ok(html.includes('各模型用量'), '应渲染用量分区标题')
-
-    // 资源包：当月口径 + 逐包
-    assert.ok(html.includes('资源包利用情况'), '应渲染资源包分区标题')
-    assert.ok(html.includes('AI大模型融合资源包'), '应渲染计费项名')
-    assert.ok(html.includes('68%'), '应渲染利用率')
-    assert.ok(html.includes('中国大陆全时段加速流量5TB'), '应渲染资源包名')
-
-    // 单位可读性：上游单位 kTokens 一律换算成 tokens，界面里不应再出现 "K kTokens"。
-    // （载荷已被改成 kTokens 单位，所以这两条断言是真的在跑换算路径。）
-    assert.ok(!html.includes('k/tokens'), `界面里不应出现未换算的 k/tokens：${html.slice(0, 300)}`)
-    assert.ok(!html.includes('kTokens'), `界面里不应出现未换算的 kTokens：${html.slice(0, 300)}`)
-    assert.ok(html.includes('M tokens'), `应显示换算后的 tokens 单位：${html.slice(0, 300)}`)
-
-    // 凭据卡片（状态未加载时也不应崩）
-    assert.ok(html.includes('凭据'), '应渲染凭据分区标题')
+    // 这些是"用量展示"的内容，2026-09-30 起只在侧栏卡片 + 详情弹窗里出现。
+    for (const leaked of ['DeepSeek V4 Pro', '各模型用量', '资源包利用情况', '逐包明细']) {
+      assert.equal(html.includes(leaked), false, `设置页不该再展示「${leaked}」`)
+    }
+    // 叙述性描述一律不要：这页只放能点的东西。
+    for (const dropped of [
+      '用量在左侧栏',
+      '输入框里填的是凭据的值',
+      '会真的打一次上游',
+      '与输入框里未保存的内容无关',
+      '测试 AK/SK',
+    ]) {
+      assert.equal(html.includes(dropped), false, `设置页不该再出现描述「${dropped}」`)
+    }
   })
 
-  it('今天口径渲染延迟告警', async () => {
+  it('渲染配置项：凭据 + Key 列表 + 自动刷新', async () => {
     const html = await renderSection()
-    assert.ok(html.includes('当天数据可能有延迟'), '今天（hour 粒度）应显示延迟告警')
+    assert.ok(html.includes(translate('qiniu.credentials.heading')), '应有凭据卡片')
+    assert.ok(html.includes(translate('qiniu.credentials.accessKey')), '应有 AccessKey 表单')
+    assert.ok(html.includes(translate('qiniu.credentials.secretKey')), '应有 SecretKey 表单')
+    assert.ok(html.includes(translate('qiniu.keys.heading')), '应有 Key 列表')
+    assert.ok(html.includes(translate('qiniu.keys.empty')), '没有名册时给出空状态')
+    assert.ok(html.includes(translate('qiniu.settings.pollHeading')), '应有自动刷新卡片')
+    assert.ok(html.includes(translate('qiniu.settings.pollLabel')), '应有刷新间隔输入')
+  })
+
+  it('自动刷新默认显示配置里的 5 秒', async () => {
+    const html = await renderSection()
+    assert.ok(
+      html.includes('value="5"'),
+      `没有作用域时应显示默认值 5，实际：${html.slice(0, 400)}`,
+    )
+    assert.ok(html.includes(translate('qiniu.settings.pollUnavailable')), '无写能力时要说清楚')
+  })
+
+  it('有设置作用域时显示其中的值，并允许写入', async () => {
+    const settings = {
+      getSnapshot: () => ({ value: { pollIntervalSec: 30 } }),
+      subscribe: () => () => {},
+      set: async () => true,
+    }
+    const html = await renderSection({ settings })
+    assert.ok(html.includes('value="30"'), `应显示作用域里的值，实际：${html.slice(0, 400)}`)
+    assert.equal(html.includes(translate('qiniu.settings.pollUnavailable')), false, '可写时不该提示只读')
+    assert.ok(html.includes(translate('qiniu.settings.pollHint')), '可写时应给使用说明')
   })
 
   it('所有文案都从字典解析，没有漏翻译的裸键', async () => {
@@ -250,199 +257,189 @@ describe('面板渲染 · 注入面摊平成 props', () => {
 
   it('缺少 t 时退化为显示键名而不是崩掉', async () => {
     const store = createUsageStore({ fetchImpl: makeClientFetch() })
-    store.actions.start()
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    await new Promise((resolve) => setTimeout(resolve, 10))
     // 只给 store，不给 t
     const html = renderToStaticMarkup(createElement(UsageSection, { store } as UsageSectionProps))
     assert.ok(html.includes('qiniu.title'), '缺 t 时应退化为键名，而不是抛错或空白')
   })
 })
 
-describe('面板渲染 · 三态', () => {
-  it('首屏（尚未取数）渲染骨架而不是错误', async () => {
-    const html = await renderSection({ start: false })
-    assert.ok(html.includes('七牛云用量'), '加载中也应有标题')
-    assert.ok(html.includes('正在加载用量数据'), '应渲染加载提示')
-    assert.ok(!html.includes('用量查询失败'), '首帧不应闪出错误文案')
-  })
-
-  it('传输失败渲染错误态与重试按钮', async () => {
-    const html = await renderSection({ failUsage: true })
-    assert.ok(html.includes('用量查询失败'), `应渲染错误标题，实际：${html.slice(0, 300)}`)
-    assert.ok(html.includes('重试'), '应提供重试按钮')
-    assert.ok(html.includes('500'), '应带上可定位的状态码信息')
-  })
-
-  it('无数据渲染空状态而不是崩', async () => {
-    const html = await renderSection({ emptyUsage: true })
-    assert.ok(html.includes('当日没有用量记录'), `应渲染空状态，实际：${html.slice(0, 300)}`)
-  })
-})
-
-describe('面板渲染 · Key 选择器', () => {
-  /** 真实账号名册（设计文档 §15.10 实测）。 */
-  const REAL_KEYS: KeysPayload['keys'] = [
-    { label: 'dsh', masked: 'sk-69*****03bf3', apiKey: 'sk-69*****03bf3', hasUsage: undefined, hasToken: false },
-    { label: 'Halo', masked: 'sk-15*****72ca6', apiKey: 'sk-15*****72ca6', hasUsage: undefined, hasToken: false },
-  ]
-
-  it('下拉框里是真名，不是一串星号', async () => {
-    const html = await renderSection({ keys: REAL_KEYS })
-    assert.ok(html.includes('>dsh<'), `应渲染 Key 名 dsh，实际：${html.slice(0, 500)}`)
-    assert.ok(html.includes('>Halo<'), '应渲染 Key 名 Halo')
-    assert.ok(!html.includes('*******'), `不该出现星号占位选项，实际：${html.slice(0, 500)}`)
-  })
-
-  it('hasUsage=undefined 时不标"无用量"（当天没归属信息，标了就是撒谎）', async () => {
-    const html = await renderSection({ keys: REAL_KEYS })
-    assert.ok(!html.includes('无用量'), '三态里的"不确定"不应渲染成无用量')
-  })
-
-  it('hasUsage=false（真无用量）仍标出来', async () => {
-    const html = await renderSection({
-      keys: [{ label: 'Halo', masked: '', hasUsage: false, hasToken: false }],
-    })
-    assert.ok(html.includes('Halo（当日没有用量记录）'), `应标注无用量，实际：${html.slice(0, 500)}`)
-  })
-
-  it('没有任何可选 Key 时 Key 选择器置灰而不是消失（避免布局跳动）', async () => {
-    const html = await renderSection({ keys: [] })
-    assert.ok(html.includes('上游暂未返回 Key 名册'), '应给出置灰原因')
-    assert.ok(html.includes('disabled'), 'Key 选择器应禁用')
-    assert.ok(html.includes('全部 Key（汇总）'), '仍显示当前口径')
-    assert.ok(html.includes('日期'), '日期字段仍在')
-  })
-
-  it('选了具体 Key 但当天上游没归属时，明确说明下方是账号汇总', async () => {
-    const html = await renderSection({
-      keys: REAL_KEYS,
-      unattributedUsage: true,
-      key: 'dsh',
-    })
-    assert.ok(
-      html.includes('上游尚未把当天用量归属到「dsh」'),
-      `应渲染未归属提示条，实际：${html.slice(0, 600)}`,
-    )
-    assert.ok(html.includes('DeepSeek V4 Pro'), '仍要显示账号汇总数据，不能是空面板')
-  })
-
-  it('账号级视图（未选 Key）不显示未归属提示', async () => {
-    const html = await renderSection({ keys: REAL_KEYS, unattributedUsage: true })
-    assert.ok(!html.includes('上游尚未把当天用量归属到'), '账号级视图无需这条提示')
-  })
-})
-
-describe('面板渲染 · 逐包明细独立成卡片', () => {
-  /** 按卡片切开 HTML，便于断言"某内容属于哪张卡"。 */
-  function cards(html: string): string[] {
-    return html.split(`class="${cls.card}"`).slice(1)
-  }
-
-  it('当月资源包与逐包明细是两张不同的卡片', async () => {
-    const html = await renderSection()
-    const sections = cards(html)
-
-    const monthCard = sections.find((chunk) => chunk.includes('资源包利用情况'))
-    const packsCard = sections.find((chunk) => chunk.includes('逐包明细'))
-
-    assert.ok(monthCard !== undefined, '应存在「资源包利用情况」卡片')
-    assert.ok(packsCard !== undefined, '应存在「逐包明细」卡片')
-    assert.notEqual(monthCard, packsCard, '两者必须是不同的卡片')
-  })
-
-  it('当月卡片只放当月计费项，不放逐包条目', async () => {
-    const sections = cards(await renderSection())
-    const monthCard = sections.find((chunk) => chunk.includes('资源包利用情况'))
-    assert.ok(monthCard !== undefined)
-    assert.ok(monthCard.includes('AI大模型融合资源包'), '当月计费项应在当月卡片里')
-    assert.ok(
-      !monthCard.includes('中国大陆全时段加速流量5TB'),
-      '逐包条目不应出现在当月卡片里（口径不同，混在一起会读错）',
-    )
-  })
-
-  it('逐包卡片只放逐包条目，并带生命周期口径徽标', async () => {
-    const sections = cards(await renderSection())
-    const packsCard = sections.find((chunk) => chunk.includes('逐包明细'))
-    assert.ok(packsCard !== undefined)
-    assert.ok(packsCard.includes('中国大陆全时段加速流量5TB'), '资源包名应在逐包卡片里')
-    assert.ok(packsCard.includes('生命周期口径'), '逐包卡片应标注口径')
-    assert.ok(
-      !packsCard.includes('AI大模型融合资源包'),
-      '当月计费项不应出现在逐包卡片里',
-    )
-  })
-})
-
-describe('悬浮按钮 · 渲染', () => {
-  /** 弹层定位参数：向下、右对齐（右上角按钮的默认展开方向）。 */
-  const DOWN_RIGHT = { placement: { vertical: 'down' as const, align: 'end' as const }, available: 600 }
-
+describe('侧栏速览卡片 · 渲染', () => {
   /** 造一个 store 并驱动到 ready（或 error）。 */
   async function makeStore(options: { failUsage?: boolean } = {}) {
-    const { createUsageStore } = await import('../src/client/usage-store.ts')
     const store = createUsageStore({ fetchImpl: makeClientFetch(options) })
     store.actions.start()
-    const deadline = Date.now() + 2_000
-    while (Date.now() < deadline) {
+    await waitFor(() => {
       const status = store.getSnapshot().status
-      if (status === 'ready' || status === 'error') break
-      await new Promise((resolve) => setTimeout(resolve, 2))
-    }
+      return status === 'ready' || status === 'error'
+    })
     return store
   }
 
-  it('收起状态只渲染悬浮按钮，不渲染弹层', async () => {
+  /** 用一份现成的宿主载荷造 store（模型数量可控，用于测缩略的截断）。 */
+  async function makeStoreWithPayload(payload: OverviewPayload) {
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })) as typeof fetch
+    const store = createUsageStore({ fetchImpl })
+    store.actions.start()
+    await waitFor(() => store.getSnapshot().status === 'ready')
+    return store
+  }
+
+  it('默认收起：只有一行速览，没有模型行、没有详情按钮、没有弹窗', async () => {
     const store = await makeStore()
+    const total = formatTokens(store.getSnapshot().data?.usage?.totals.total)
     const html = renderToStaticMarkup(
-      createElement(FloatingUsage, { store, t: translate }),
+      createElement(SidebarUsageCard, { store, t: translate }),
     )
-    assert.ok(html.includes('aria-haspopup="dialog"'), '应渲染悬浮按钮')
-    assert.equal(html.includes('role="dialog"'), false, '收起时不应渲染弹层')
-    assert.ok(html.includes(translate('qiniu.fab.button')), '应显示按钮文案')
+    assert.ok(html.includes('data-dsh-part="sidebar-card-strip"'), '应渲染收起态的一行速览')
+    assert.ok(html.includes(translate('qiniu.card.today')), '应显示卡片标题')
+    assert.ok(html.includes(`${total} tokens`), `应显示今日总量，实际：${html.slice(0, 300)}`)
+    assert.equal(html.includes('data-dsh-part="sidebar-card-models"'), false, '收起时不应有模型缩略')
+    assert.equal(html.includes(translate('qiniu.card.detail')), false, '收起时不应有详情按钮')
+    assert.equal(html.includes('role="dialog"'), false, '没有点击就不该有弹窗')
   })
 
-  it('按钮上同时显示用量与当月剩余（余量）', async () => {
+  it('展开态只给缩略信息：模型用量 + 详情按钮（弹窗要点才开）', async () => {
     const store = await makeStore()
     const html = renderToStaticMarkup(
-      createElement(FloatingUsage, { store, t: translate }),
+      createElement(SidebarUsageCard, { store, t: translate, initialExpanded: true }),
     )
-    // fixture 的两个计费项都是 k/tokens：5120 + 32 = 5152 k/tokens = 5.15M tokens
-    assert.ok(html.includes(`${translate('qiniu.fab.remain')} 5.15M`), `按钮应显示余量，实际：${html}`)
-    assert.ok(html.includes(translate('qiniu.fab.remainTitle', { amount: '5.15M tokens' })), '悬停提示应带完整单位')
-    assert.ok(html.includes(cls.fabRemain), '余量应有独立类名（等宽数字）')
+    assert.ok(html.includes('data-dsh-part="sidebar-card-models"'), '应渲染模型缩略区')
+    assert.ok(html.includes('DeepSeek V4 Pro'), '应含模型名')
+    assert.ok(html.includes('Qwen Max'), '应含第二个模型')
+    assert.ok(html.includes(translate('qiniu.card.detail')), '展开后应提供详情按钮')
+    // 详细包信息是**下一层**：展开态里不出现，资源包文案只在弹窗里。
+    assert.equal(html.includes(translate('qiniu.respack.heading')), false, '展开态不该塞资源包详情')
+    assert.equal(html.includes('role="dialog"'), false, '详情按钮只是入口，弹窗要点击才开')
   })
 
-  it('默认右上角：弹层向下、右对齐展开', async () => {
-    const store = await makeStore()
+  it('缩略最多 3 个模型，其余折成一行合计', async () => {
+    const base = await makePayload()
+    const usage = base.usage
+    assert.ok(usage !== null, '前置条件：fixture 应有用量数据')
+    const models = Array.from({ length: 5 }, (_, index) => ({
+      ...usage.models[0]!,
+      id: `model-${index}`,
+      name: `模型-${index}`,
+      total: 1_000 * (index + 1),
+    }))
+    const store = await makeStoreWithPayload({
+      ...base,
+      usage: { ...usage, models, totals: { input: 15_000, output: 0, total: 15_000 } },
+    })
     const html = renderToStaticMarkup(
-      createElement(FloatingUsage, { store, t: translate, initialOpen: true }),
+      createElement(SidebarUsageCard, { store, t: translate, initialExpanded: true }),
     )
-    assert.ok(html.includes('role="dialog"'), '应渲染弹层')
-    assert.ok(html.includes('top:calc(100% + 8px)'), `顶部按钮 → 向下展开，实际：${html.slice(0, 400)}`)
-    assert.ok(html.includes('right:0'), '右半屏 → 右对齐（弹层向左长）')
+    assert.equal((html.match(/data-dsh-part="sidebar-card-model"/g) ?? []).length, MODEL_PREVIEW_COUNT)
+    // 缩略按用量降序：显示的是用量最大的 3 个（模型-4/3/2），不是声明顺序的前 3 个。
+    assert.ok(html.includes('模型-4') && html.includes('模型-2'), '应显示用量最大的 3 个模型')
+    assert.equal(html.includes('模型-1'), false, '落在缩略之外的模型应被折进合计行')
+    assert.ok(
+      html.includes(translate('qiniu.card.more', { count: 2, total: formatTokens(1_000 + 2_000) })),
+      `应有其余模型合计行，实际：${html.slice(0, 500)}`,
+    )
   })
 
-  it('展开的弹层包含用量、当月资源包与逐包明细三块', async () => {
+  it('宿主半区没在服务（404）时整块退场，而不是钉一条永远好不了的报错', async () => {
+    const store = createUsageStore({
+      fetchImpl: (async () => new Response('not found', { status: 404 })) as typeof fetch,
+    })
+    store.actions.start()
+    await waitFor(() => store.getSnapshot().status === 'error')
+    const html = renderToStaticMarkup(
+      createElement(SidebarUsageCard, { store, t: translate, initialExpanded: true }),
+    )
+    assert.equal(html, '', '路由 404 时卡片应完全不渲染')
+  })
+
+  it('取数失败时展开态给出错误提示而不是空白', async () => {
+    const store = await makeStore({ failUsage: true })
+    const html = renderToStaticMarkup(
+      createElement(SidebarUsageCard, { store, t: translate, initialExpanded: true }),
+    )
+    assert.ok(html.includes(translate('qiniu.card.failed')), `应提示取数失败，实际：${html.slice(0, 400)}`)
+    assert.ok(html.includes(translate('qiniu.card.detail')), '失败时也要能进详情重试')
+  })
+})
+
+describe('详情弹窗 · 渲染', () => {
+  /** 造一个 store 并驱动到 ready（或 error）。 */
+  async function makeStore(options: { failUsage?: boolean; unattributedUsage?: boolean } = {}) {
+    const store = createUsageStore({ fetchImpl: makeClientFetch(options) })
+    store.actions.start()
+    await waitFor(() => {
+      const status = store.getSnapshot().status
+      return status === 'ready' || status === 'error'
+    })
+    return store
+  }
+
+  it('有栏目导航：用量与资源包两个 tab，默认在用量', async () => {
     const store = await makeStore()
     const html = renderToStaticMarkup(
-      createElement(FloatingPanel, { store, t: translate, onClose: () => {}, rect: DOWN_RIGHT }),
+      createElement(UsageDetailDialog, { store, t: translate, onClose: () => {} }),
     )
-    assert.ok(html.includes('role="dialog"'), '应渲染弹层')
+    assert.ok(html.includes('role="dialog"'), '应是弹窗')
+    assert.ok(html.includes('aria-modal="true"'), '应标记为模态')
+    assert.ok(html.includes(translate('qiniu.detail.title')), '应有弹窗标题')
+    assert.ok(html.includes('role="tablist"'), '应有栏目导航')
+    assert.ok(html.includes(translate('qiniu.detail.tab.usage')), '应有用量栏目')
+    assert.ok(html.includes(translate('qiniu.detail.tab.respack')), '应有资源包栏目')
+    // 默认停在用量栏：有模型表，没有资源包卡片。
+    assert.ok(html.includes('DeepSeek V4 Pro'), '默认应显示用量栏内容')
+    assert.equal(html.includes(translate('qiniu.respack.heading')), false, '默认不该把资源包也渲染出来')
+  })
+
+  it('用量栏带日期与 Key 两个筛选器（单 Key 统计 / 总和）', async () => {
+    const store = await makeStore()
+    const html = renderToStaticMarkup(
+      createElement(UsageDetailDialog, { store, t: translate, onClose: () => {}, initialTab: 'usage' }),
+    )
+    assert.ok(html.includes('data-dsh-part="detail-day"'), '应有日期筛选')
+    assert.ok(html.includes('data-dsh-part="detail-key"'), '应有 Key 筛选')
+    assert.ok(html.includes(translate('qiniu.usage.key.all')), '默认应是全部 Key（总和）')
     assert.ok(html.includes(translate('qiniu.usage.heading')), '应含用量块')
     assert.ok(html.includes('DeepSeek V4 Pro'), '应含模型名')
+    // 单位换算同样适用于弹窗
+    assert.ok(!html.includes('k/tokens'), `弹窗里也不应出现未换算单位：${html.slice(0, 200)}`)
+  })
+
+  it('选中单个 Key 时给出"汇总口径"提示，并把 Key 传进查询', async () => {
+    // 当天上游没有 Key 归属信息：此时必须说明"下面是账号汇总"。
+    const store = await makeStore({ unattributedUsage: true })
+    store.actions.setKey('我的测试Key')
+    await waitFor(() => store.getSnapshot().key === '我的测试Key')
+    const html = renderToStaticMarkup(
+      createElement(UsageDetailDialog, { store, t: translate, onClose: () => {}, initialTab: 'usage' }),
+    )
+    assert.ok(
+      html.includes(translate('qiniu.usage.keyUnattributed', { key: '我的测试Key' })),
+      '当天数据未归属时要说明"下面是账号汇总"',
+    )
+    assert.ok(html.includes(translate('qiniu.usage.keySingleHint')), '应说明单 Key 口径取昨天的原因')
+  })
+
+  it('资源包栏包含当月口径与逐包明细', async () => {
+    const store = await makeStore()
+    const html = renderToStaticMarkup(
+      createElement(UsageDetailDialog, { store, t: translate, onClose: () => {}, initialTab: 'respack' }),
+    )
     assert.ok(html.includes(translate('qiniu.respack.heading')), '应含当月资源包块')
     assert.ok(html.includes(translate('qiniu.respack.packs')), '应含逐包明细块')
     assert.ok(html.includes('中国大陆全时段加速流量5TB'), '应含资源包名')
-    assert.ok(html.includes(translate('qiniu.fab.hint')), '应提示完整面板的位置')
-    // 单位换算同样适用于浮层
-    assert.ok(!html.includes('k/tokens'), `浮层里也不应出现未换算单位：${html.slice(0, 200)}`)
+    assert.ok(html.includes(translate('qiniu.card.detailHint')), '应提示完整面板的位置')
+    // 资源包栏不该出现模型表。
+    assert.equal(html.includes('DeepSeek V4 Pro'), false, '资源包栏不该带出用量表')
   })
 
-  it('取数失败时弹层给出错误而不是空白', async () => {
+  it('取数失败时弹窗给出错误而不是空白', async () => {
     const store = await makeStore({ failUsage: true })
     const html = renderToStaticMarkup(
-      createElement(FloatingPanel, { store, t: translate, onClose: () => {}, rect: DOWN_RIGHT }),
+      createElement(UsageDetailDialog, { store, t: translate, onClose: () => {} }),
     )
     assert.ok(html.includes(translate('qiniu.error.usage')), '应显示错误标题')
     assert.ok(html.includes('500'), '应带上可定位的状态码')

@@ -1,30 +1,28 @@
 /**
- * 「七牛云用量」设置分区主面板。
+ * 「七牛云用量」设置分区 —— **只做配置与自检**。
  *
- * 设计文档 §9。要点：
+ * 2026-09-30 改版：用量与资源包的展示整体搬到左侧栏底部的速览卡片（点开卡片里的
+ * 「详情」看完整内容），设置页不再重复渲染一遍用量表 —— 那份内容在 280px 宽的侧栏
+ * 里看是缩略、在这里看是全量，两处维护两套状态机，删掉一处才清爽。设置页留下的
+ * 是**只有设置页才做得了的事**：
  *
- * - 轮询与取数都挂在**挂载周期**上：关掉设置页 → 零请求。
- * - 已有数据时刷新保留旧数据 + 顶部细进度条，避免闪空。
- * - 用量与资源包**分源展示错误**，互不遮蔽。
+ * - 凭据表单（AK/SK 写入凭据库，值永不回显）；
+ * - 自检：AK/SK 测试（真的打一次上游）、API Key 测试（Bearer token 查昨天单 Key）；
+ * - 自动刷新间隔（默认 5 秒，写回插件配置即时生效）；
+ * - 提示：数据在哪看、其余配置在哪改。
  *
- * 布局：面板头 → 工具条 → 告警 → 骨架/卡片 → 分源错误。卡片之间统一 16px，
- * 卡内 12px，形成稳定的纵向节奏（原先到处 2~4px，挤成一团）。
+ * 取数周期：设置页只读凭据状态，**不再拉用量**；用量由侧栏卡片的 store 负责。
  *
  * @module dsh-qiniu-usage/client/UsageSection
  */
 
-import { createElement, useEffect, useSyncExternalStore, type ReactNode } from 'react'
-import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
-import type { UsageSnapshot } from '../qiniu/usage.ts'
-import type { OverviewPayload } from '../service.ts'
+import { createElement, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
+import type { SettingsScope } from './settings-scope.ts'
 import type { Config } from '../config.ts'
 import { CredentialsForm } from './CredentialsForm.tsx'
-import { ModelUsageTable } from './ModelUsageTable.tsx'
-import { RespackMonth } from './RespackMonth.tsx'
-import { RespackPacks } from './RespackPacks.tsx'
-import { formatClock, formatTokens, formatWatermark } from './format.ts'
+import { formatTokens } from './format.ts'
 import { cls, PANEL_CSS } from './styles.ts'
-import { keyOptions, type UsageStoreView } from './usage-store.ts'
+import type { UsageState, UsageStoreView } from './usage-store.ts'
 
 /** 翻译函数签名（与 locale 提供的形态兼容）。 */
 export type Translate = (key: string, params?: Record<string, unknown>) => string
@@ -43,7 +41,7 @@ export type Translate = (key: string, params?: Record<string, unknown>) => strin
  */
 export interface UsageSectionFace {
   store: UsageStoreView
-  /** 设置作用域：读取 `pollIntervalSec` 等用户配置。 */
+  /** 设置作用域：读/写 `pollIntervalSec` 等用户配置。 */
   settings?: SettingsScope<Config>
 }
 
@@ -55,14 +53,15 @@ export interface UsageSectionProps extends UsageSectionFace {
   close?: () => void
 }
 
-/** `/overview` 载荷里资源包部分的类型。 */
-type OverviewRespack = NonNullable<OverviewPayload['respack']>
+/** 设置页里自动刷新间隔的兜底值；与宿主 `Config` 的默认值保持一致。 */
+export const DEFAULT_POLL_INTERVAL_SEC = 5
 
-/** 日期选择器的选项值。 */
-const DAY_OPTIONS = ['today', 'yesterday'] as const
+/** 自动刷新间隔的合法区间（与配置 schema 一致）。 */
+const POLL_MIN_SEC = 0
+const POLL_MAX_SEC = 3600
 
 /**
- * 用量分区主面板。
+ * 用量设置分区。
  *
  * 注入面的成员是**摊平**传进来的（`props.store` / `props.settings`），
  * `t` 由框架按 `locale:` 注入。
@@ -93,34 +92,19 @@ function UsageSectionInner({ store, settings, t }: {
 }): ReactNode {
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
 
-  // 挂载周期 = 请求生命周期。卸载时 stop()，因此关掉设置页后零请求。
+  // 设置页只需要凭据状态与 Key 名册（Key 表格要用）；用量由侧栏卡片的 store 取，
+  // 这里不 start()、不拉用量。
   useEffect(() => {
-    store.actions.start()
-    store.actions.loadKeys()
     store.actions.loadCredentials()
-    return () => {
-      store.actions.stop()
-    }
+    store.actions.loadKeys()
   }, [store])
 
-  const data = state.data
-  const usage = data?.usage ?? null
-  const respack = data?.respack ?? null
-  const warnings = [...(usage?.warnings ?? []), ...(respack?.warnings ?? [])]
-  const keys = keyOptions(state.keys, t('qiniu.account.all'))
-
-  // 'idle' 是 effect 跑起来之前的那一帧；把它也算作加载中，否则首帧会闪出
-  // "用量查询失败" 的错误卡片（store 一 start 就会变成 loading）。
-  const isInitialLoading = data === null && state.status !== 'error'
-  const showOnlyError = state.status === 'error' && data === null
+  const poll = usePollInterval(settings, t)
 
   return createElement(
     'div',
     { className: cls.panel },
     createElement('style', null, PANEL_CSS),
-
-    // 顶部细进度条：刷新时保留旧数据
-    state.refreshing && data !== null ? createElement('div', { className: cls.progress }) : null,
 
     // 面板头
     createElement(
@@ -130,324 +114,233 @@ function UsageSectionInner({ store, settings, t }: {
       createElement('div', { className: cls.subtitle }, t('qiniu.subtitle')),
     ),
 
-    // 工具条：筛选项靠左，动作靠右
+    // 凭据
     createElement(
-      'div',
-      { className: cls.toolbar },
-      // Key 选择器：**始终渲染**，没有可选 Key 时置灰。
-      // 不隐藏的理由：名册是异步到的，隐藏会让工具条在加载完成时突然多出一个
-      // 控件（布局跳动）；置灰则位置稳定，并且诚实地说出"这个维度现在没得选"。
+      'section',
+      { className: cls.card },
       createElement(
         'div',
-        { className: cls.field },
-        createElement('span', { className: cls.label }, t('qiniu.key')),
-        createElement(
-          'select',
-          {
-            className: cls.select,
-            value: state.key,
-            'aria-label': t('qiniu.key'),
-            disabled: state.keys.length === 0,
-            ...(state.keys.length === 0 ? { title: t('qiniu.key.unavailable') } : {}),
-            onChange: (event: { target: { value: string } }) => store.actions.setKey(event.target.value),
-          },
-          ...keys.map((option) =>
-            createElement(
-              'option',
-              { key: option.value, value: option.value },
-              // 只有明确"当日有归属、但没有它"才标无用量；`undefined` = 上游
-              // 当天没有归属信息，标"无用量"是在说谎。
-              option.hasUsage === false ? `${option.label}（${t('qiniu.empty.noUsage')}）` : option.label,
-            ),
-          ),
-          // 已选中的 Key 不在候选里（名册取不到）时补一个选项，避免显示错乱。
-          state.key === '' || keys.some((option) => option.value === state.key)
-            ? null
-            : createElement('option', { key: state.key, value: state.key }, state.key),
-        ),
+        { className: cls.cardHead },
+        createElement('h4', { className: cls.cardTitle }, t('qiniu.credentials.heading')),
       ),
-      createElement(
-        'div',
-        { className: cls.field },
-        createElement('span', { className: cls.label }, t('qiniu.day')),
-        createElement(
-          'select',
-          {
-            className: cls.select,
-            value: state.day,
-            'aria-label': t('qiniu.day'),
-            onChange: (event: { target: { value: string } }) => store.actions.setDay(event.target.value),
-          },
-          ...DAY_OPTIONS.map((value) =>
-            createElement('option', { key: value, value }, t(`qiniu.day.${value}`)),
-          ),
-          // 落在非今天/昨天的具体日期上时补一个选项，避免 select 显示错乱。
-          DAY_OPTIONS.includes(state.day as (typeof DAY_OPTIONS)[number])
-            ? null
-            : createElement('option', { key: state.day, value: state.day }, state.day),
-        ),
-      ),
-      createElement('div', { style: { flex: '1 1 auto' } }),
-      state.updatedAt === null
+      createElement(CredentialsForm, {
+        credentials: state.credentials,
+        t,
+        onSet: (ref: string, value: string) => store.actions.setCredential(ref, value),
+        onUnset: (ref: string) => store.actions.unsetCredential(ref),
+      }),
+      state.credentialsError === null
         ? null
         : createElement(
-            'span',
-            { className: cls.label },
-            t('qiniu.updated', { time: formatClock(state.updatedAt) }),
+            'div',
+            { className: `${cls.callout} ${cls.calloutError}` },
+            createElement('strong', null, t('qiniu.credentials.heading')),
+            createElement('span', null, state.credentialsError),
           ),
+    ),
+
+    // Key 列表
+    createElement(KeyTableCard, { state, t }),
+
+    // 自动刷新
+    createElement(
+      'section',
+      { className: cls.card },
       createElement(
-        'button',
-        {
-          type: 'button',
-          className: cls.btn,
-          disabled: state.refreshing,
-          onClick: () => store.actions.refresh(),
-        },
-        state.refreshing ? t('qiniu.refreshing') : t('qiniu.refresh'),
+        'div',
+        { className: cls.cardHead },
+        createElement('h4', { className: cls.cardTitle }, t('qiniu.settings.pollHeading')),
+      ),
+      createElement(
+        'div',
+        { className: cls.formRow },
+        createElement('span', { className: cls.label }, t('qiniu.settings.pollLabel')),
+        createElement('input', {
+          className: cls.input,
+          'data-dsh-part': 'settings-poll-input',
+          style: { flex: '0 0 92px' },
+          type: 'number',
+          min: POLL_MIN_SEC,
+          max: POLL_MAX_SEC,
+          step: 1,
+          value: poll.draft,
+          disabled: poll.writable !== true,
+          'aria-label': t('qiniu.settings.pollLabel'),
+          onChange: (event: { target: { value: string } }) => poll.setDraft(event.target.value),
+        }),
+        createElement(
+          'button',
+          {
+            type: 'button',
+            className: cls.btn,
+            'data-dsh-part': 'settings-poll-save',
+            disabled: poll.writable !== true || poll.save === 'saving',
+            onClick: () => void poll.saveNow(),
+          },
+          poll.save === 'saving' ? t('qiniu.settings.pollSaving') : t('qiniu.settings.pollSave'),
+        ),
+        poll.save === 'idle' && poll.message === null
+          ? null
+          : createElement(
+              'span',
+              { className: poll.save === 'failed' ? cls.dangerText : cls.muted, style: { fontSize: '11px' } },
+              poll.message ?? t('qiniu.settings.pollSaved'),
+            ),
+      ),
+      createElement(
+        'span',
+        { className: cls.muted, style: { fontSize: '11px' } },
+        poll.writable ? t('qiniu.settings.pollHint') : t('qiniu.settings.pollUnavailable'),
       ),
     ),
 
-    // 今天口径常驻延迟告警（设计文档 §8.1）
-    state.day === 'today' && usage !== null
-      ? createElement(
-          'div',
-          { className: `${cls.callout} ${cls.calloutWarn}` },
-          createElement('strong', null, t('qiniu.warn.dataDelay')),
-          usage.watermark === undefined || usage.watermark === ''
-            ? null
-            : createElement(
-                'span',
-                { className: cls.muted, style: { fontSize: '11.5px' } },
-                `上游水位 ${formatWatermark(usage.watermark)}`,
-              ),
-        )
-      : null,
-
-    // 选了具体 Key、但这份数据没有 Key 归属：必须说清"下面是账号汇总"，
-    // 而不是默默显示账号总量（看着像筛选失效）或显示空面板（看着像坏了）。
-    state.key !== '' && usage?.unattributedKeys === true
-      ? createElement(
-          'div',
-          { className: `${cls.callout} ${cls.calloutWarn}`, role: 'status' },
-          createElement('strong', null, t('qiniu.warn.keyUnattributed', { key: state.key })),
-        )
-      : null,
-
-    // 面板级传输错误
-    showOnlyError
-      ? createElement(
-          'div',
-          { className: `${cls.callout} ${cls.calloutError}` },
-          createElement('strong', null, t('qiniu.error.usage')),
-          createElement('span', null, state.error ?? ''),
-          createElement(
-            'button',
-            {
-              type: 'button',
-              className: cls.btn,
-              style: { alignSelf: 'flex-start', marginTop: '4px' },
-              onClick: () => store.actions.refresh(),
-            },
-            t('qiniu.error.retry'),
-          ),
-        )
-      : null,
-
-    // 首屏骨架：形状贴近真实卡片（标题 + 若干行）
-    isInitialLoading
-      ? createElement(
-          'div',
-          { className: cls.card },
-          createElement(
-            'div',
-            { className: cls.skeleton },
-            createElement('div', { className: cls.skelLine, style: { width: '32%' } }),
-            createElement('div', { className: cls.skelLine, style: { width: '92%' } }),
-            createElement('div', { className: cls.skelLine, style: { width: '78%' } }),
-            createElement('div', { className: cls.skelLine, style: { width: '60%' } }),
-          ),
-          createElement(
-            'div',
-            { className: cls.muted, style: { fontSize: '11.5px' } },
-            t('qiniu.loading'),
-          ),
-        )
-      : null,
-
-    // 用量卡片
-    !isInitialLoading && !showOnlyError
-      ? createElement(
-          'section',
-          { className: cls.card },
-          createElement(
-            'div',
-            { className: cls.cardHead },
-            createElement('h4', { className: cls.cardTitle }, t('qiniu.usage.heading')),
-            usage === null || usage.models.length === 0
-              ? null
-              : createElement(
-                  'span',
-                  { className: cls.cardNote },
-                  t('qiniu.usage.summary', {
-                    total: formatTokens(usage.totals.total),
-                    models: usage.models.length,
-                  }),
-                ),
-          ),
-          renderUsageBlock(usage, state.key, t),
-        )
-      : null,
-
-    // 资源包卡片（当月口径）
-    !isInitialLoading && !showOnlyError
-      ? createElement(
-          'section',
-          { className: cls.card },
-          createElement(
-            'div',
-            { className: cls.cardHead },
-            createElement('h4', { className: cls.cardTitle }, t('qiniu.respack.heading')),
-            createElement('span', { className: cls.badge }, t('qiniu.respack.monthScope')),
-          ),
-          renderMonthBlock(respack, t),
-        )
-      : null,
-
-    // 逐包明细：**独立卡片**。它是生命周期口径，与上方当月口径是两回事，
-    // 放同一张卡里容易把两种口径读混，也不便于单独定位（设计文档 §3.3）。
-    !isInitialLoading && !showOnlyError
-      ? createElement(
-          'section',
-          { className: cls.card },
-          createElement(
-            'div',
-            { className: cls.cardHead },
-            createElement('h4', { className: cls.cardTitle }, t('qiniu.respack.packs')),
-            createElement('span', { className: cls.badge }, t('qiniu.respack.packLifecycle')),
-            respack === null || respack.packages.length === 0
-              ? null
-              : createElement(
-                  'span',
-                  { className: cls.cardNote },
-                  t('qiniu.respack.packsCount', { count: respack.packages.length }),
-                ),
-          ),
-          renderPacksBlock(store, respack, t),
-        )
-      : null,
-
-    // 凭据卡片：键名只读 + 值输入框（两层语义，见 §10.2）
-    !isInitialLoading && !showOnlyError
-      ? createElement(
-          'section',
-          { className: cls.card },
-          createElement(
-            'div',
-            { className: cls.cardHead },
-            createElement('h4', { className: cls.cardTitle }, t('qiniu.credentials.heading')),
-          ),
-          createElement(CredentialsForm, {
-            credentials: state.credentials,
-            t,
-            onSet: (ref: string, value: string) => store.actions.setCredential(ref, value),
-            onUnset: (ref: string) => store.actions.unsetCredential(ref),
-          }),
-        )
-      : null,
-
-    // 告警：用量与资源包的告警合并放在面板级 —— 原先挂在资源包卡片里，
-    // 导致"用量"的告警出现在资源包区域，归属不清。
-    !isInitialLoading && !showOnlyError && warnings.length > 0
-      ? createElement(
-          'section',
-          { className: cls.card },
-          createElement(
-            'div',
-            { className: cls.cardHead },
-            createElement('h4', { className: cls.cardTitle }, t('qiniu.warnings.heading')),
-          ),
-          createElement(
-            'div',
-            { className: cls.warnList },
-            ...warnings.map((warning, index) =>
-              createElement(
-                'div',
-                { key: `${index}-${warning}`, className: cls.muted, style: { fontSize: '11.5px' } },
-                `· ${warning}`,
-              ),
-            ),
-          ),
-        )
-      : null,
-
-    // 分源错误：用量与资源包失败互不遮蔽
-    ...(!showOnlyError && data !== null
-      ? data.errors.map((error) => {
-          const label = error.source === 'usage' ? t('qiniu.error.usage') : t('qiniu.error.respack')
-          const hint = error.isForbidden
-            ? t('qiniu.error.forbidden')
-            : error.isAuthError
-              ? t('qiniu.error.auth')
-              : null
-          return createElement(
-            'div',
-            { key: `${error.source}-${error.code ?? 'na'}`, className: `${cls.callout} ${cls.calloutError}` },
-            createElement(
-              'strong',
-              null,
-              label + (error.code === undefined ? '' : `（code=${error.code}）`),
-            ),
-            createElement('span', null, error.message),
-            hint === null
-              ? null
-              : createElement('span', { className: cls.muted, style: { fontSize: '11.5px' } }, hint),
-          )
-        })
-      : []),
+    // 其余配置的位置
+    createElement(
+      'div',
+      { className: cls.muted, style: { fontSize: '11px', textWrap: 'pretty' } },
+      t('qiniu.settings.restHint'),
+    ),
   )
 }
 
-/** 用量块：空状态 / 模型表。 */
-function renderUsageBlock(usage: UsageSnapshot | null, selectedKey: string, t: Translate): ReactNode {
-  if (usage === null) {
-    return createElement('div', { className: cls.empty }, t('qiniu.error.usage'))
-  }
+/**
+ * Key 表格：列出 `/keys` 拿到的 Key（名称 + 掩码 + 当日三态）。
+ *
+ * 只做展示：名册来自 AK/SK 接口（最近 30 天出现过的 Key），这张表就是"当前 AK/SK
+ * 能看到哪些 Key"的证据。单 Key 的用量统计在左侧栏卡片 →「详情」的用量栏目里。
+ */
+function KeyTableCard({ state, t }: {
+  state: UsageState
+  t: Translate
+}): ReactNode {
+  const keys = state.keys
 
-  if (usage.models.length === 0) {
-    return createElement(
+  return createElement(
+    'section',
+    { className: cls.card },
+    createElement(
       'div',
-      { className: cls.empty },
-      selectedKey === '' ? t('qiniu.empty.noUsage') : t('qiniu.empty.noUsageKey'),
-    )
-  }
+      { className: cls.cardHead },
+      createElement('h4', { className: cls.cardTitle }, t('qiniu.keys.heading')),
+      keys.length === 0
+        ? null
+        : createElement('span', { className: cls.cardNote }, t('qiniu.keys.count', { count: keys.length })),
+    ),
 
-  return createElement(ModelUsageTable, { models: usage.models, grandTotal: usage.totals.total, t })
+    keys.length === 0
+      ? createElement('div', { className: cls.empty }, t('qiniu.keys.empty'))
+      : createElement(
+          'div',
+          { className: cls.keyTable, 'data-dsh-part': 'settings-key-table' },
+          // 表头：没有它，三列数字/掩码/状态的含义要靠猜。
+          createElement(
+            'div',
+            { className: `${cls.keyRow} ${cls.keyHead}` },
+            createElement('span', { className: cls.keyCell }, t('qiniu.keys.name')),
+            createElement('span', { className: cls.keyCell }, t('qiniu.keys.masked')),
+            createElement('span', { className: cls.keyCell }, t('qiniu.keys.today')),
+          ),
+          ...keys.map((key) =>
+            createElement(
+              'div',
+              {
+                key: `${key.label}-${key.masked}`,
+                className: cls.keyRow,
+                'data-dsh-part': 'settings-key-row',
+              },
+              createElement('span', { className: cls.keyCell, title: key.label }, key.label),
+              createElement(
+                'span',
+                { className: cls.keyMasked, title: key.masked },
+                key.masked === '' ? '—' : key.masked,
+              ),
+              createElement(
+                'span',
+                { className: cls.muted, style: { fontSize: '10.5px', whiteSpace: 'nowrap' } },
+                key.hasUsage === true
+                  ? t('qiniu.keys.usage.yes')
+                  : key.hasUsage === false
+                    ? t('qiniu.keys.usage.no')
+                    : t('qiniu.keys.usage.unknown'),
+              ),
+            ),
+          ),
+        ),
+  )
 }
 
-/** 当月口径块：空状态 / 利用率列表。 */
-function renderMonthBlock(
-  respack: OverviewRespack | null,
-  t: Translate,
-): ReactNode {
-  if (respack === null) {
-    return createElement('div', { className: cls.empty }, t('qiniu.error.respack'))
-  }
-  return createElement(RespackMonth, { snapshot: respack, t })
+/** 自动刷新间隔的读写状态。 */
+interface PollIntervalState {
+  /** 输入框里的草稿值。 */
+  draft: string
+  setDraft(next: string): void
+  /** 当前部署是否允许写入。 */
+  writable: boolean
+  save: 'idle' | 'saving' | 'saved' | 'failed'
+  /** 保存结果文案；成功且无额外说明时为 `null`。 */
+  message: string | null
+  saveNow(): Promise<void>
 }
 
-/** 逐包明细块：空状态 / 逐包列表。 */
-function renderPacksBlock(
-  store: UsageStoreView,
-  respack: OverviewRespack | null,
-  t: Translate,
-): ReactNode {
-  if (respack === null) {
-    return createElement('div', { className: cls.empty }, t('qiniu.error.respack'))
+/**
+ * 自动刷新间隔：读当前配置 + 写回。
+ *
+ * 作用域可能只有读能力（binder 提供方缺席、或部署不接受写），此时输入框与按钮
+ * 都置灰，并说明只能用配置文件里的值。
+ *
+ * @param settings - 设置作用域；可缺省。
+ * @param t - 翻译函数。
+ * @returns 草稿值、可写性与保存动作。
+ */
+function usePollInterval(settings: SettingsScope<Config> | undefined, t: Translate): PollIntervalState {
+  const read = (): number => {
+    const configured = settings?.getSnapshot().value?.pollIntervalSec
+    return typeof configured === 'number' ? configured : DEFAULT_POLL_INTERVAL_SEC
   }
-  return createElement(RespackPacks, {
-    snapshot: respack,
-    details: store.getSnapshot().details,
-    onLoadDetail: (orderHash: string, poId: number) => store.actions.loadDetail(orderHash, poId),
-    t,
-  })
+  const [draft, setDraft] = useState<string>(() => String(read()))
+  const [save, setSave] = useState<PollIntervalState['save']>('idle')
+  const [message, setMessage] = useState<string | null>(null)
+
+  // 配置从别处变化（另一处保存/宿主下发）时跟随，但不覆盖用户正在输入的草稿。
+  useEffect(() => {
+    if (settings === undefined) return
+    const sync = (): void => {
+      setDraft((current) => (Number(current) === read() ? current : String(read())))
+    }
+    sync()
+    return settings.subscribe(sync)
+    // read 只依赖 settings，重新订阅的时机由它决定。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings])
+
+  const writable = typeof settings?.set === 'function'
+
+  return {
+    draft,
+    setDraft: (next: string) => {
+      setDraft(next)
+      setSave('idle')
+      setMessage(null)
+    },
+    writable,
+    save,
+    message,
+    saveNow: async (): Promise<void> => {
+      if (settings?.set === undefined) return
+      const parsed = Number(draft)
+      const value = Number.isFinite(parsed)
+        ? Math.min(Math.max(Math.round(parsed), POLL_MIN_SEC), POLL_MAX_SEC)
+        : DEFAULT_POLL_INTERVAL_SEC
+      setSave('saving')
+      try {
+        const written = await settings.set('pollIntervalSec', value)
+        setDraft(String(value))
+        setSave(written ? 'saved' : 'failed')
+        setMessage(written ? null : t('qiniu.settings.pollFailed'))
+      } catch {
+        setSave('failed')
+        setMessage(t('qiniu.settings.pollFailed'))
+      }
+    },
+  }
 }

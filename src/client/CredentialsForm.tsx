@@ -50,13 +50,15 @@ function CredentialRow(props: {
   hint: string
   status: CredentialStatusView | null
   t: Translate
+  /** 受控值：草稿由 {@link CredentialsForm} 统一持有。 */
+  value: string
+  onValueChange: (next: string) => void
   onSet: (value: string) => Promise<void>
   onUnset: () => Promise<void>
   /** 是否用密码框（SK 用）。 */
   secret?: boolean
 }): ReactNode {
-  const { title, hint, status, t, onSet, onUnset, secret } = props
-  const [value, setValue] = useState('')
+  const { title, hint, status, t, value, onValueChange, onSet, onUnset, secret } = props
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -67,7 +69,7 @@ function CredentialRow(props: {
     try {
       await onSet(value)
       // 提交后立即清空 —— 明文不在界面里停留。
-      setValue('')
+      onValueChange('')
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -124,7 +126,7 @@ function CredentialRow(props: {
         spellCheck: false,
         disabled: status?.writable === false || busy,
         'aria-label': `${title} 值`,
-        onChange: (event: { target: { value: string } }) => setValue(event.target.value),
+        onChange: (event: { target: { value: string } }) => onValueChange(event.target.value),
         onKeyDown: (event: { key: string }) => {
           if (event.key === 'Enter') void save()
         },
@@ -170,6 +172,14 @@ function CredentialRow(props: {
  * @returns 表单元素；无凭据库时整块置灰并说明原因。
  */
 export function CredentialsForm({ credentials, t, onSet, onUnset }: CredentialsFormProps): ReactNode {
+  /** 两行输入框的草稿值；提交成功后各自清空。 */
+  const [drafts, setDrafts] = useState({ accessKey: '', secretKey: '' })
+
+  /** 更新一个草稿。 */
+  const editDraft = (field: 'accessKey' | 'secretKey', next: string): void => {
+    setDrafts((current) => ({ ...current, [field]: next }))
+  }
+
   if (credentials === null) {
     return createElement('div', { className: cls.empty }, t('qiniu.credentials.unavailable'))
   }
@@ -191,6 +201,8 @@ export function CredentialsForm({ credentials, t, onSet, onUnset }: CredentialsF
       hint: t('qiniu.credentials.accessKeyPlaceholder'),
       status: credentials.accessKey,
       t,
+      value: drafts.accessKey,
+      onValueChange: (next: string) => editDraft('accessKey', next),
       onSet: (value: string) => onSet(credentials.accessKey.ref, value),
       onUnset: () => onUnset(credentials.accessKey.ref),
     }),
@@ -200,13 +212,10 @@ export function CredentialsForm({ credentials, t, onSet, onUnset }: CredentialsF
       status: credentials.secretKey,
       t,
       secret: true,
+      value: drafts.secretKey,
+      onValueChange: (next: string) => editDraft('secretKey', next),
       onSet: (value: string) => onSet(credentials.secretKey.ref, value),
       onUnset: () => onUnset(credentials.secretKey.ref),
     }),
-    createElement(
-      'div',
-      { className: cls.muted, style: { fontSize: '11px' } },
-      t('qiniu.credentials.hint'),
-    ),
   )
 }

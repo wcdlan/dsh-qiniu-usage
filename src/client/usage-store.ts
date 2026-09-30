@@ -51,6 +51,16 @@ export interface UsageStoreActions {
   stop(): void
   setDay(day: string): void
   setKey(key: string): void
+  /**
+   * 同时改日期与 Key（详情弹窗"选具体 Key 就切到昨天"用的），**只取一次数**。
+   *
+   * 分成两次调用会打两次上游（`day=today&key=X` 那次的结果马上被丢掉）——
+   * 上游限速 5 次/秒，能不浪费就不浪费。
+   *
+   * @param day - 新的日期口径。
+   * @param key - 新的 Key 过滤。
+   */
+  setFilters(day: string, key: string): void
   refresh(): void
   loadKeys(): void
   loadDetail(orderHash: string, poId: number): void
@@ -238,6 +248,12 @@ export function createUsageStore(options: UsageStoreOptions = {}): UsageStoreVie
     setKey(key: string): void {
       if (key === state.key) return
       emit({ ...state, key })
+      void load('initial')
+    },
+
+    setFilters(day: string, key: string): void {
+      if (day === state.day && key === state.key) return
+      emit({ ...state, day, key })
       void load('initial')
     },
 

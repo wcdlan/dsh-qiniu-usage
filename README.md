@@ -12,9 +12,11 @@ leaving the browser:
 - **How much resource-pack quota is left this month?** — per-billing-item
   capacity / used / remaining, plus per-pack used amount and expiry date.
 
-It renders as a **「七牛云用量」 section in Settings**, and as a **draggable
-floating button** on the chat page for an at-a-glance number. It is **read-only
-against Qiniu** — it never creates, modifies or bills anything.
+It renders as a **「七牛云用量」 section in Settings**, and as a **glance card
+pinned below the left session list** (styled after the host's own 今日用量 card):
+collapsed it is one line with today's total, expanded it shows **model usage**
+only, and the **Details** button inside opens the resource-pack information. It
+is **read-only against Qiniu** — it never creates, modifies or bills anything.
 
 ```
 ┌ 七牛云用量 ────────────────────────────  ⟳ 刷新   12:04:31 ┐
@@ -34,8 +36,8 @@ against Qiniu** — it never creates, modifies or bills anything.
 
 | | |
 |---|---|
-| Implemented | Signing, usage normalisation, resource packs, the settings panel, the credential form, the floating button |
-| Tests | 353 passing across 16 files (`npm test`) |
+| Implemented | Signing, usage normalisation, resource packs, the settings panel, the credential form, the sidebar glance card |
+| Tests | 352 passing across 17 files (`npm test`) |
 | Not yet done | **End-to-end run against a real Qiniu account** — every upstream fact in this plugin comes from documentation and fixtures. If something is off with real data, [`scripts/smoke.mjs`](#verify-against-a-real-account) is the tool that shows it. |
 
 The UI ships in Chinese and English and follows the host theme.
@@ -201,8 +203,8 @@ name — never by value:
 | `financeBaseUrl` | `https://api.qiniu.com` | Resource-pack / finance API base |
 | `todayTtlSec` | `60` | Cache TTL (s) for today's hourly data; `10`–`600` |
 | `dashboardTtlSec` | `600` | Cache TTL (s) for past days and resource packs; `60`–`3600` |
-| `pollIntervalSec` | `0` | Client poll interval in seconds; `0` = manual refresh only |
-| `floatingButton` | `true` | Show the chat-page floating button; off keeps the panel settings-only |
+| `pollIntervalSec` | `5` | Client auto-refresh interval in seconds; `0` = manual refresh only |
+| `sidebarCard` | `true` | Show the glance card at the sidebar foot; off keeps the panel settings-only |
 
 Everything has a default, so an empty config is valid.
 
@@ -210,7 +212,7 @@ The panel itself exposes the key/date selectors, refresh and the credential form
 The remaining keys are edited the same way as any other DSH plugin setting —
 through the profile's plugin config (for example an id-targeted row in
 `$DSH_HOME/profiles/web/cordis.patch.yml`). `pollIntervalSec` and
-`floatingButton` are picked up live; the rest apply on the next `dsh web` boot.
+`sidebarCard` are picked up live; the rest apply on the next `dsh web` boot.
 
 ### Provide the credentials — two ways
 
@@ -246,29 +248,50 @@ keeps working.
 
 ## Usage
 
-Once credentials resolve, the settings section shows:
+The settings page (**Settings → 七牛云用量**) holds **configuration only**; usage
+lives in the sidebar glance card:
 
-- **A key selector** — every key that had usage in the last 30 days (up to
-  yesterday), plus an "all keys" aggregate.
-- **A date selector** — today / yesterday / a specific date.
-- **今日各模型用量** — per-model input / output / total tokens, with a total row.
-  Large tables collapse behind a "more" toggle.
-- **资源包利用情况（本月）** — month-to-date utilisation per billing item.
-- **逐包明细** — per-pack used amount, quantity and expiry, on a **lifetime**
-  basis. The two resource-pack cards are deliberately separate: their "used"
-  figures are different quantities, and mixing them in one card reads wrong.
-- **凭据** — the credential form.
-- **告警** — shown only when there is something to warn about.
+- **凭据** — the AccessKey / SecretKey form (written to the credential store, values
+  never echoed).
+- **Key list** — a table of the keys `/keys` returned (**name / masked / today's
+  status**), display only. The table is itself the answer to "does this AK/SK work
+  and which keys can it see" (it goes through the signed `/keys` route); for per-key
+  usage open the sidebar card's **Details** and pick a key in the usage section.
+- **Auto refresh** — interval in seconds, default **5**, `0` = manual only; written
+  back to the plugin config and applied live.
+- **Hints** — timezone, cache TTLs, key roster and the rest live in the profile
+  plugin config.
 
-The **floating button** (top-right of the chat page, including the new-session
-page) shows today's usage and this month's remaining pack quota. Click to expand
-a summary; click again, press <kbd>Esc</kbd> or click outside to close. It is
-**draggable**, and its position is remembered **per browser** (`localStorage`).
-It only fetches while expanded — collapsed, it makes **zero background requests**.
-Turn it off with `floatingButton: false`.
+The **sidebar glance card** sits at the foot of the left column, below the
+session list and above the Settings row (it hides itself when the sidebar
+collapses to the 56px rail). It has two levels:
 
-Both the panel and the button poll only while mounted: closing the settings page
-or the popover stops the traffic.
+- **collapsed (default)** — one line: icon + title + value; click to expand;
+- **expanded** — **thumbnail information only** (the 3 largest models plus a
+  「其余 N 个模型合计」 line) with **Details** and **Refresh** buttons.
+
+**Details** opens a centred dialog with two tabbed sections:
+
+- **Model usage** — date (today / yesterday) and key (all keys combined / a single
+  key) filters plus the per-model input / output / total table. Picking a specific
+  key **switches to yesterday automatically** and says why (upstream has not
+  attributed today's usage to individual keys yet).
+- **Resource packs** — month-to-date utilisation per billing item plus per-pack
+  detail (lifetime basis, deduction drill-down).
+
+The card title follows those filters: switch to yesterday and it reads 昨日用量, filter
+a key and it appends the key name — card and dialog share one store, so the number on
+the card can never mean something other than what it says.
+
+The expanded state is remembered **per browser** (`localStorage`, key
+`dsh-qiniu-usage:sidebar-card:expanded`). Turn the whole card off with
+`sidebarCard: false`.
+
+The card is always mounted, so it fetches once on mount and then polls at
+`pollIntervalSec` (default 5s; `0` = manual only, and the expanded view has
+Refresh). The upstream already caches today at an hourly cadence (`todayTtlSec`,
+default 60s), so a fast UI cadence does not hammer upstream. The settings page
+reads credential status and the key roster only — it fetches **no usage data**.
 
 ## Security & privacy
 
@@ -331,10 +354,12 @@ node scripts/preview.mjs
   --screenshot="$PWD/.tmp/shot.png" "file://$PWD/.tmp/preview.html?w=820&diag=1"
 ```
 
-`preview.mjs` writes three documents: `.tmp/preview.html` (the settings panel),
-`.tmp/preview-keyed.html` (a key selected while today's data is still
-unattributed) and `.tmp/preview-floating.html` (the chat-page popover over sample
-chat content).
+`preview.mjs` writes five documents: `.tmp/preview.html` (the settings page),
+`.tmp/preview-card.html` and
+`.tmp/preview-card-expanded.html` (the glance card, collapsed and expanded, inside
+a **simulated sidebar**) plus `.tmp/preview-detail.html` and
+`.tmp/preview-detail-packs.html` (the detail dialog's two sections). The last four
+include the host's own 今日用量 card for comparison.
 
 `?w=<px>` sets the simulated panel width — use it rather than `--window-size` for
 narrow widths, because Chrome clamps its window to ~500px and merely crops the
@@ -375,12 +400,19 @@ status.
 | Credential form is greyed out | The ref resolves from a read-only source (environment variable). Unset it and restart to make the form writable. |
 | Resource-pack cards error, usage is fine | The AK lacks billing/IAM financial permission. |
 | Selected key shows account-wide figures for today | Expected — see the first two limitations below. Query **yesterday or earlier**. |
+| No glance card in the sidebar | Check that `sidebarCard` is not `false`, and that the sidebar is expanded (wide) — the card hides itself in the 56px rail. If the shell renamed its sidebar classes the card temporarily has no seat; restart and reload after a host upgrade. |
+| The Details dialog is covered by another overlay | The dialog uses `z-index: 60`; a host overlay above that covers it. |
 
 ## Known limitations
 
+- **Per-key statistics live in the detail dialog.** The settings page only lists keys
+  (name / masked / today's status); to see one key's usage, open the sidebar card's
+  **Details** → usage section and pick a key (it switches to yesterday automatically,
+  because upstream has not attributed today's usage to individual keys yet).
 - **Zero-usage keys cannot be enumerated.** The upstream usage response only lists
   keys that had usage in the queried window, so a key with no usage on that day is
-  invisible; register it under `apiKeys[]` in the settings to make it selectable.
+  invisible. (Registrations under `apiKeys[]` still feed the key test and the
+  `/keys` route.)
 - **Per-key filtering is unavailable for today.** Measured against the real API:
   for the current day the upstream has not attributed usage to individual keys yet
   and returns a single `api_key: "unknown"` aggregate group. The key roster
@@ -396,9 +428,14 @@ status.
 - **Lifetime vs month-to-date scope.** A pack's `used_amount` is lifetime
   cumulative while `month-overview`'s `month_used` is month-to-date; the panel
   labels both.
-- **Floating-button z-index.** The popover is appended to `document.body` with
-  `z-index: 40`. A host overlay with a lower index would be covered; a higher one
-  covers the popover.
+- **The sidebar card depends on shell class names.** The plugin injects its
+  container straight into the shell's `footArea` (substring-matched on
+  `[class*=sidebarCol]` / `[class*=footArea]` / `[class*=settingsArea]`), because
+  the foot's only extension seat (`sidebar.footer.action`) is a flex row that
+  cannot host a block. If the shell renames those classes the card simply has no
+  seat (no error; a body-level observer waits for one to appear).
+- **Detail-dialog z-index.** The dialog is `position: fixed` with `z-index: 60`; a
+  host overlay above that would cover it.
 - **Billing permission.** The finance API needs an AK with billing/IAM financial
   permission. Without it the resource-pack card shows a targeted hint and the usage
   half keeps working.

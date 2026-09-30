@@ -11,7 +11,8 @@
 
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { FloatingUsage } from '../src/client/FloatingUsage.tsx'
+import { SidebarUsageCard } from '../src/client/SidebarUsageCard.tsx'
+import { UsageDetailDialog } from '../src/client/UsageDetailDialog.tsx'
 import { UsageSection } from '../src/client/UsageSection.tsx'
 import { zh } from '../src/client/locales.ts'
 import { createUsageStore } from '../src/client/usage-store.ts'
@@ -40,7 +41,8 @@ const USAGE: OverviewPayload['usage'] = {
     end: '2026-09-17T12:00:00+08:00',
     timezone: 'Asia/Shanghai',
   },
-  // 取自真实账号的一组数据（单一模型），便于与线上截图逐项对照。
+  // 取自真实账号的数据，再补齐几个模型：侧栏卡片的"缩略 + 其余 N 个"
+  // 只有在多模型下才看得出来，单一模型会让这段排版永远没被检查过。
   models: [
     {
       id: 'deepseek/deepseek-v4.1-flash',
@@ -49,8 +51,29 @@ const USAGE: OverviewPayload['usage'] = {
       totalsByKind: { input: 117_340_000, output: 427_770, cachedInput: 0, cachedWrite: 0, other: 0 },
       total: 117_767_770,
     },
+    {
+      id: 'deepseek/deepseek-v3.2',
+      name: 'deepseek/deepseek-v3.2',
+      items: [],
+      totalsByKind: { input: 21_400_000, output: 96_400, cachedInput: 8_000_000, cachedWrite: 0, other: 0 },
+      total: 21_496_400,
+    },
+    {
+      id: 'qwen/qwen3-max-preview-2026-08',
+      name: 'qwen/qwen3-max-preview-2026-08',
+      items: [],
+      totalsByKind: { input: 4_120_000, output: 51_200, cachedInput: 0, cachedWrite: 0, other: 0 },
+      total: 4_171_200,
+    },
+    {
+      id: 'moonshot/kimi-k2-thinking',
+      name: 'moonshot/kimi-k2-thinking',
+      items: [],
+      totalsByKind: { input: 302_000, output: 8_100, cachedInput: 0, cachedWrite: 0, other: 0 },
+      total: 310_100,
+    },
   ],
-  totals: { input: 117_340_000, output: 427_770, total: 117_767_770 },
+  totals: { input: 143_162_000, output: 583_470, total: 143_745_470 },
   watermark: '2026-09-17T11:00:00+08:00',
   warnings: ['当天数据可能存在延迟（上游按小时粒度返回）'],
   fetchedAt: new Date().toISOString(),
@@ -210,10 +233,10 @@ function makePreviewFetch(): typeof fetch {
   return (async (input: RequestInfo | URL) => {
     const url = new URL(String(input), 'http://localhost')
     const body = url.pathname.endsWith('/credentials')
-      ? { ok: true, credentials: CREDENTIALS }
-      : url.pathname.endsWith('/keys')
-        ? { keys: KEYS }
-        : makePayload()
+          ? { ok: true, credentials: CREDENTIALS }
+          : url.pathname.endsWith('/keys')
+            ? { keys: KEYS }
+            : makePayload()
     return new Response(JSON.stringify(body), {
       status: 200,
       headers: { 'content-type': 'application/json' },
@@ -240,7 +263,7 @@ function makePayload(): OverviewPayload {
  * @param options - `key` 用于预览"选了具体 Key、但当天上游未归属"的提示态。
  * @returns 面板的静态 HTML。
  */
-export async function renderPanel(options: { key?: string } = {}): Promise<string> {
+export async function renderPanel(): Promise<string> {
   const payload: OverviewPayload = {
     ok: true,
     usage: USAGE,
@@ -265,25 +288,47 @@ export async function renderPanel(options: { key?: string } = {}): Promise<strin
 
   void payload
   const store = await makeReadyStore()
-  if (options.key !== undefined && options.key !== '') {
-    store.actions.setKey(options.key)
-    // setKey 会重新取数；等快照带上未归属标记即可。
-    const deadline = Date.now() + 1_000
-    while (Date.now() < deadline && store.getSnapshot().data?.usage?.unattributedKeys !== true) {
-      await new Promise((resolve) => setTimeout(resolve, 5))
-    }
-  }
-  return renderToStaticMarkup(createElement(UsageSection, { store, t }))
+  return renderToStaticMarkup(createElement(UsageSection, {
+    store,
+    t,
+    // 预览里给一个可写的设置作用域，看的才是真实形态（否则是"部署只读"的降级态）。
+    settings: {
+      getSnapshot: () => ({ value: { pollIntervalSec: 5 } }),
+      subscribe: () => () => {},
+      set: async () => true,
+    } as never,
+  }))
 }
 
 /**
- * 渲染"展开的悬浮按钮"为 HTML 片段（对话页视图用）。
+ * 渲染侧栏速览卡片为 HTML 片段（左侧栏视图用）。
  *
- * @returns 浮层静态 HTML。
+ * @param options - `expanded` 直接渲染展开态（SSR 没有事件处理器，点不出来）。
+ * @returns 卡片静态 HTML。
  */
-export async function renderFloating(): Promise<string> {
+export async function renderSidebarCard(options: { expanded?: boolean } = {}): Promise<string> {
   const store = await makeReadyStore()
-  return renderToStaticMarkup(createElement(FloatingUsage, { store, t, initialOpen: true }))
+  return renderToStaticMarkup(
+    createElement(SidebarUsageCard, { store, t, initialExpanded: options.expanded === true }),
+  )
+}
+
+/**
+ * 渲染详情弹窗为 HTML 片段。
+ *
+ * @param options - 初始栏目（SSR 点不了 tab）。
+ * @returns 弹窗静态 HTML。
+ */
+export async function renderDetailDialog(options: { tab?: 'usage' | 'respack' } = {}): Promise<string> {
+  const store = await makeReadyStore()
+  return renderToStaticMarkup(
+    createElement(UsageDetailDialog, {
+      store,
+      t,
+      onClose: () => {},
+      initialTab: options.tab ?? 'usage',
+    }),
+  )
 }
 
 export { t as translate }

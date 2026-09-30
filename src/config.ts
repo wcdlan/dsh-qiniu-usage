@@ -46,21 +46,30 @@ export interface Config {
   todayTtlSec?: number
   /** 历史日与资源包的缓存 TTL，秒。 */
   dashboardTtlSec?: number
-  /** 客户端轮询间隔，秒；`0` = 纯手动刷新（默认）。 */
+  /**
+   * 客户端自动刷新间隔，秒；`0` = 纯手动刷新。
+   *
+   * 默认 5 秒：侧栏卡片常驻，用户希望数字自己会动。上游当天数据本身有小时级
+   * 缓存（`todayTtlSec`，默认 60 秒），所以界面刷得快不等于上游被打得快 ——
+   * 宿主侧仍然只按 TTL 去上游取数。
+   */
   pollIntervalSec?: number
 
   /**
-   * 是否在页面上显示悬浮按钮（对话页的用量速览入口）。
+   * 是否在左侧栏底部显示用量速览卡片。
    *
-   * 默认开启：它是这个插件最主要的日常入口。不想要常驻浮层的用户可关掉，
-   * 面板仍在「设置 → 七牛云用量」里。
+   * 默认开启：它是这个插件最主要的日常入口（左侧会话列表下方，Settings 行之上）。
+   * 不想要常驻卡片的用户可关掉，面板仍在「设置 → 七牛云用量」里。
    */
-  floatingButton?: boolean
+  sidebarCard?: boolean
 }
 
 const DEFAULT_USAGE_BASE_URL = 'https://api.qnaigc.com'
 const DEFAULT_FINANCE_BASE_URL = 'https://api.qiniu.com'
 const DEFAULT_TIMEZONE = 'Asia/Shanghai'
+
+/** 默认自动刷新间隔（秒）；`0` 表示纯手动。 */
+const DEFAULT_POLL_INTERVAL_SEC = 5
 
 /** 设置命名空间；宿主与客户端半区必须一致。 */
 export const SETTINGS_NAMESPACE = 'dsh-qiniu-usage'
@@ -95,8 +104,8 @@ export const Config: z<Config> = z.object({
 
   todayTtlSec: z.number().min(10).max(600).default(60),
   dashboardTtlSec: z.number().min(60).max(3600).default(600),
-  pollIntervalSec: z.number().min(0).max(3600).default(0),
-  floatingButton: z.boolean().default(true),
+  pollIntervalSec: z.number().min(0).max(3600).default(DEFAULT_POLL_INTERVAL_SEC),
+  sidebarCard: z.boolean().default(true),
 })
 
 /** 归一化后的配置：所有字段必有值，且 URL 已去掉尾部 `/`。 */
@@ -113,7 +122,7 @@ export interface ResolvedConfig {
   todayTtlSec: number
   dashboardTtlSec: number
   pollIntervalSec: number
-  floatingButton: boolean
+  sidebarCard: boolean
 }
 
 /** 去掉 URL 末尾的 `/`，避免拼接出 `//v3/stat/usage`。 */
@@ -143,7 +152,7 @@ export function resolveConfig(config?: Config): ResolvedConfig {
     timezone: config?.timezone ?? DEFAULT_TIMEZONE,
     todayTtlSec: config?.todayTtlSec ?? 60,
     dashboardTtlSec: config?.dashboardTtlSec ?? 600,
-    pollIntervalSec: config?.pollIntervalSec ?? 0,
-    floatingButton: config?.floatingButton ?? true,
+    pollIntervalSec: config?.pollIntervalSec ?? DEFAULT_POLL_INTERVAL_SEC,
+    sidebarCard: config?.sidebarCard ?? true,
   }
 }

@@ -1,6 +1,10 @@
 /**
  * 视觉预览：把面板渲染成 HTML，供 headless Chrome 截图查看。
  *
+ * 生成五份：设置页、侧栏卡片（收起 / 展开）、详情弹窗的两个栏目。
+ * 侧栏那两份是**模拟 shell 侧栏**渲染的（会话列表 + 宿主自带的「今日用量」速览卡
+ * + 我们的卡片 + 设置行），因为卡片的高度、间距、截断只有在真实宽度下才看得出来。
+ *
  * 用途：改样式时能**真的看到**效果，而不是盲改 CSS。开发期工具，不参与构建产物。
  *
  * ```bash
@@ -28,7 +32,10 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const tmp = resolve(root, '.tmp')
 const bundlePath = resolve(tmp, 'preview.bundle.mjs')
 const htmlPath = resolve(tmp, 'preview.html')
-const floatingHtmlPath = resolve(tmp, 'preview-floating.html')
+const cardHtmlPath = resolve(tmp, 'preview-card.html')
+const cardExpandedHtmlPath = resolve(tmp, 'preview-card-expanded.html')
+const detailHtmlPath = resolve(tmp, 'preview-detail.html')
+const detailPacksHtmlPath = resolve(tmp, 'preview-detail-packs.html')
 
 /** 把预览入口打成 Node 可执行的 ESM（react 走 node_modules，不打进包）。 */
 async function buildPreview() {
@@ -46,25 +53,28 @@ async function buildPreview() {
 }
 
 /**
- * 对话页视图：给浮层一个"聊天内容"背景，才能看清它压在上面是否可读。
+ * 侧栏视图：模拟 shell 的左侧栏（会话列表 + 底部区域），把卡片放进真实位置。
  *
- * @param floatingHtml - 浮层的静态 HTML。
+ * 底部区域里刻意复刻了宿主自带的「今日用量」速览卡：两张卡片的圆角、底色、
+ * 字号、留白是否协调，一眼就能比出来。顺序也照实排：真实运行时
+ * `@linxin666/dsh-usage` 的卡坚持紧邻 Settings 行，所以稳定后是"我们的卡在上、
+ * 宿主的卡在下"。
+ *
+ * @param cardHtml - 卡片的静态 HTML。
+ * @param options - `expanded` 用于标题；`dialogHtml` 非空时叠一层详情弹窗。
  * @returns 完整 HTML 文档。
  */
-function wrapFloatingDocument(floatingHtml) {
-  const bubbles = Array.from({ length: 14 }, (_, index) => {
-    const side = index % 2 === 0 ? 'left' : 'right'
-    const width = 40 + ((index * 17) % 45)
-    return `<div class="row ${side}"><div class="bubble" style="width:${width}%">`
-      + '这里是对话内容，用来检验浮层压在其上的可读性与层次。'.repeat(index % 3 === 0 ? 1 : 2)
-      + '</div></div>'
-  }).join('')
+function wrapSidebarDocument(cardHtml, options = {}) {
+  const sessions = Array.from({ length: 12 }, (_, index) =>
+    `<div class="session${index === 0 ? ' active' : ''}">`
+    + `<span class="dot"></span>会话 ${index + 1} —— 一段会被截断的很长很长的标题`
+    + '</div>').join('')
 
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>dsh-qiniu-usage 预览（对话页浮层）</title>
+<title>dsh-qiniu-usage 预览（左侧栏卡片）</title>
 <style>
   :root {
     color-scheme: dark;
@@ -72,47 +82,50 @@ function wrapFloatingDocument(floatingHtml) {
     --dsw-alias-label-tertiary: #8b8b93; --dsw-alias-label-caption: #7a7a82;
     --dsw-alias-bg-base: #16161a; --dsw-alias-bg-layer-1: #1d1d22;
     --dsw-alias-bg-layer-2: #232329; --dsw-alias-bg-layer-3: #2c2c34;
-    --dsw-alias-bg-overlay: #202027;
+    --dsw-alias-bg-overlay: #202027; --dsw-alias-bg-mask: rgba(0,0,0,.55);
     --dsw-alias-border-l1: #2a2a31; --dsw-alias-border-l2: #383842; --dsw-alias-border-l3: #44444f;
     --dsw-alias-interactive-bg-hover: #2a2a32;
     --dsw-alias-state-business-primary: #4c8dff; --dsw-alias-state-warn-primary: #e0a03a;
-    --dsw-alias-state-error-primary: #f0635f;
-    --dsw-alias-brand-primary: #4c8dff;
-    --dsw-alias-button-floating-fill: #24242c; --dsw-alias-button-floating-hover: #2c2c36;
+    --dsw-alias-state-error-primary: #f0635f; --dsw-alias-brand-primary: #4c8dff;
   }
   html, body { margin: 0; background: #101014; }
   body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; -webkit-font-smoothing: antialiased; }
-  /* 假顶栏：用来看清悬浮按钮默认的 top:56px 会不会压到顶栏控件 */
-  .topbar { height: 48px; display: flex; align-items: center; gap: 8px; padding: 0 16px;
-            background: #16161a; border-bottom: 1px solid #232329; }
-  .topbarTitle { font-size: 13px; color: var(--dsw-alias-label-primary); }
-  .topbarActions { margin-left: auto; display: flex; gap: 8px; }
-  .ghost { width: 28px; height: 28px; border-radius: 8px; background: var(--dsw-alias-bg-layer-2); }
-  .chat { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
-  .row { display: flex; }
-  .row.right { justify-content: flex-end; }
-  .bubble { padding: 10px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.6;
-            background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-secondary); }
-  .row.right .bubble { background: #26303f; color: var(--dsw-alias-label-primary); }
+  .frame { display: flex; height: 100vh; }
+  /* 侧栏：宿主默认 280px */
+  .sidebarCol { width: 280px; flex: none; box-sizing: border-box; padding: 8px 8px 6px;
+                display: flex; flex-direction: column; background: #17171c; }
+  .regionArea { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+  .session { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; border-radius: 8px;
+             font-size: 12.5px; color: var(--dsw-alias-label-secondary);
+             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .session.active { background: #24242c; color: var(--dsw-alias-label-primary); }
+  .dot { width: 6px; height: 6px; border-radius: 999px; background: #3a3a44; flex: none; }
+  .footArea { flex: none; display: flex; flex-direction: column; }
+  /* 宿主自带的「今日用量」速览卡（复刻形态，用来对比） */
+  .hostCard { box-sizing: border-box; width: 100%; margin: 2px 0 4px; padding: 8px;
+              border-radius: 12px; background: color-mix(in srgb, currentColor 4%, transparent);
+              color: var(--dsw-alias-label-primary); font-size: 12px; display: flex; align-items: baseline; gap: 8px; }
+  .hostCard .label { opacity: .65; }
+  .hostCard .value { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .settingsArea { height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 8px;
+                  border-radius: 8px; font-size: 12.5px; color: var(--dsw-alias-label-secondary); }
+  .center { flex: 1; display: flex; align-items: center; justify-content: center;
+            color: var(--dsw-alias-label-caption); font-size: 12px; }
 </style>
 </head>
-<body><pre id="boxdiag" style="position:fixed;left:0;bottom:0;margin:0;padding:2px 6px;background:#000c;color:#8b8b93;font:11px ui-monospace,Menlo,monospace;z-index:99;display:none"></pre><div class="topbar"><span class="topbarTitle">会话标题</span><span class="topbarActions"><span class="ghost"></span><span class="ghost"></span><span class="ghost"></span></span></div><div class="chat">${bubbles}</div>${floatingHtml}<script>
-  // ?diag=1 时把弹层的实际外框打出来 —— 用它核对"弹层有没有溢出视口"。
-  if (location.search.indexOf('diag=1') >= 0) {
-    var box = document.querySelector('.dsh-qiniu-popup');
-    var out = document.getElementById('boxdiag');
-    out.style.display = 'block';
-    if (box) {
-      var r = box.getBoundingClientRect();
-      out.textContent = 'popup L' + Math.round(r.left) + ' T' + Math.round(r.top)
-        + ' R' + Math.round(r.right) + ' B' + Math.round(r.bottom)
-        + ' (' + Math.round(r.width) + 'x' + Math.round(r.height) + ')'
-        + ' | viewport ' + window.innerWidth + 'x' + window.innerHeight;
-    } else {
-      out.textContent = 'no popup';
-    }
-  }
-</script>
+<body>
+<div class="frame">
+  <div class="sidebarCol">
+    <div class="regionArea">${sessions}</div>
+    <div class="footArea">
+      ${cardHtml}
+      <div class="hostCard"><span class="label">今日用量</span><span class="value">2.18M tokens</span></div>
+      <div class="settingsArea">⚙ 设置</div>
+    </div>
+  </div>
+  <div class="center">会话内容区（卡片应贴在左侧栏底部、设置行之上）</div>
+</div>
+${options.dialogHtml ?? ''}
 </body>
 </html>
 `
@@ -205,15 +218,31 @@ async function main() {
   await writeFile(htmlPath, wrapDocument(panelHtml), 'utf8')
   console.log(`预览已生成：${htmlPath}`)
 
-  // 变体：选了具体 Key、但当天上游未归属 → 提示条。用来看"账号汇总"文案的排版。
-  const keyedHtml = await mod.renderPanel({ key: 'dsh' })
-  const keyedPath = resolve(tmp, 'preview-keyed.html')
-  await writeFile(keyedPath, wrapDocument(keyedHtml), 'utf8')
-  console.log(`预览已生成：${keyedPath}`)
+  // 侧栏卡片：收起态（默认）与展开态各出一张，放在模拟的侧栏里。
+  const collapsed = await mod.renderSidebarCard({ expanded: false })
+  await writeFile(cardHtmlPath, wrapSidebarDocument(collapsed), 'utf8')
+  console.log(`预览已生成：${cardHtmlPath}`)
 
-  const floatingHtml = await mod.renderFloating()
-  await writeFile(floatingHtmlPath, wrapFloatingDocument(floatingHtml), 'utf8')
-  console.log(`预览已生成：${floatingHtmlPath}`)
+  const expanded = await mod.renderSidebarCard({ expanded: true })
+  await writeFile(cardExpandedHtmlPath, wrapSidebarDocument(expanded, { expanded: true }), 'utf8')
+  console.log(`预览已生成：${cardExpandedHtmlPath}`)
+
+  // 详情弹窗：叠在侧栏视图之上，检验遮罩与居中。两个栏目各一张。
+  const dialog = await mod.renderDetailDialog({ tab: 'usage' })
+  await writeFile(
+    detailHtmlPath,
+    wrapSidebarDocument(expanded, { expanded: true, dialogHtml: dialog }),
+    'utf8',
+  )
+  console.log(`预览已生成：${detailHtmlPath}`)
+
+  const packsDialog = await mod.renderDetailDialog({ tab: 'respack' })
+  await writeFile(
+    detailPacksHtmlPath,
+    wrapSidebarDocument(expanded, { expanded: true, dialogHtml: packsDialog }),
+    'utf8',
+  )
+  console.log(`预览已生成：${detailPacksHtmlPath}`)
   process.exit(0)
 }
 

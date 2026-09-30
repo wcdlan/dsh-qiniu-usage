@@ -85,30 +85,64 @@ export const cls = {
   detailTable: `${NS}-detail-table`,
   warnList: `${NS}-warn-list`,
 
-  // 对话页悬浮按钮与弹层
-  fabRoot: `${NS}-fab-root`,
-  fab: `${NS}-fab`,
-  fabDragging: `${NS}-fab-dragging`,
-  fabIcon: `${NS}-fab-icon`,
-  fabTotal: `${NS}-fab-total`,
-  fabRemain: `${NS}-fab-remain`,
-  fabSep: `${NS}-fab-sep`,
-  popup: `${NS}-popup`,
-  popupHead: `${NS}-popup-head`,
-  popupTitle: `${NS}-popup-title`,
-  popupBody: `${NS}-popup-body`,
-  popupFoot: `${NS}-popup-foot`,
+  // 设置页里的自检
+  formRow: `${NS}-form-row`,
+  dangerText: `${NS}-danger-text`,
+  keyTable: `${NS}-key-table`,
+  keyRow: `${NS}-key-row`,
+  keyRowActive: `${NS}-key-row-active`,
+  keyHead: `${NS}-key-head`,
+  keyCell: `${NS}-key-cell`,
+  keyMasked: `${NS}-key-masked`,
+
+  // 侧栏卡片（左侧列表下方）
+  sideCard: `${NS}-side-card`,
+  sideCardMain: `${NS}-side-main`,
+  sideBody: `${NS}-side-body`,
+  sideStrip: `${NS}-side-strip`,
+  sideStripLabel: `${NS}-side-strip-label`,
+  sideStripValue: `${NS}-side-strip-value`,
+  sideTitle: `${NS}-side-title`,
+  sideHead: `${NS}-side-head`,
+  sideValue: `${NS}-side-value`,
+  sideToggle: `${NS}-side-toggle`,
+  sideIcon: `${NS}-side-icon`,
+  sideNote: `${NS}-side-note`,
+  sideModels: `${NS}-side-models`,
+  sideModel: `${NS}-side-model`,
+  sideModelRow: `${NS}-side-model-row`,
+  sideModelName: `${NS}-side-model-name`,
+  sideModelValue: `${NS}-side-model-value`,
+  sideModelBar: `${NS}-side-model-bar`,
+  sideModelFill: `${NS}-side-model-fill`,
+  sideMore: `${NS}-side-more`,
+  sideActions: `${NS}-side-actions`,
+  sideMeta: `${NS}-side-meta`,
+  sideError: `${NS}-side-error`,
+
+  // 详情弹窗
+  overlay: `${NS}-overlay`,
+  tabBar: `${NS}-tab-bar`,
+  tab: `${NS}-tab`,
+  tabActive: `${NS}-tab-active`,
+  dialog: `${NS}-dialog`,
+  dialogHead: `${NS}-dialog-head`,
+  dialogTitle: `${NS}-dialog-title`,
+  dialogBody: `${NS}-dialog-body`,
+  dialogFoot: `${NS}-dialog-foot`,
 } as const
 
 /** 主题 token 的简写读取（每个都带兜底值）。 */
 const v = (name: string, fallback: string): string => `var(--dsw-alias-${name}, ${fallback})`
 
 /**
- * 面板全部样式。
+ * 面板全部样式（**注入 DOM 前先剥掉注释**）。
  *
- * 由面板根节点渲染一个 `<style>` 注入；类名带包前缀，重复注入是幂等的。
+ * 注释只服务于源码阅读：它们会随 `<style>` 进入 DOM，既白占字节，又会让
+ * "界面上有没有这段文案"这类断言被注释里的词误伤（真踩过：「详情」只出现在
+ * 注释里，却让"收起态不该有详情按钮"的用例红了）。
  */
-export const PANEL_CSS = `
+const RAW_CSS = `
 .${cls.panel} {
   display: flex;
   flex-direction: column;
@@ -416,94 +450,271 @@ export const PANEL_CSS = `
 /* ── 告警清单 ───────────────────────────────────────── */
 .${cls.warnList} { display: flex; flex-direction: column; gap: 3px; }
 
-/* ── 对话页悬浮按钮与弹层 ───────────────────────────────
-   宿主级浮动 UI：挂在 document.body 的独立 React root 上（不走 slot），
-   因为新会话页没有 session，slot 化会在那里消失。见 FloatingUsage。
-
-   结构约定：.fabRoot 的**盒子就是按钮的盒子**（唯一的在流子元素是按钮，
-   弹层是 absolute 因此不撑大它）。于是：
-   - 位置 = 根元素的 left/top（拖动后）或 CSS 默认的右上角；
-   - 弹层可以用 top/bottom: calc(100% + 8px) 贴着按钮的四边展开，
-     不必知道按钮的具体尺寸。 */
-.${cls.fabRoot} {
-  position: fixed;
-  /* 默认右上角；顶部留 56px 给页面顶栏让位。拖动后由内联样式改成 left/top。 */
-  top: 56px;
-  right: 20px;
-  z-index: 40;
-  /* 宿主级图层；不拦截下层交互（仅按钮与弹层自身可点） */
-  pointer-events: none;
-}
-.${cls.fabRoot} > * { pointer-events: auto; }
-
-.${cls.fab} {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 34px;
-  padding: 0 13px;
-  border-radius: 999px;
-  border: 1px solid ${v('border-l2', 'rgba(128,128,128,.35)')};
-  /* 宿自带的浮动按钮底色，保证与原生浮动控件一致 */
-  background: ${v('button-floating-fill', v('bg-layer-1', '#1d1d22'))};
-  color: ${v('label-primary', 'inherit')};
-  font: inherit;
-  font-size: 12px;
-  cursor: grab;
-  /* 拖动时不要触发页面滚动 / 文字选择（触屏与鼠标一致） */
-  touch-action: none;
-  user-select: none;
-  -webkit-user-select: none;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, .28);
-  transition: background-color .16s ease, transform .08s ease;
-}
-.${cls.fab}:hover { background: ${v('button-floating-hover', v('interactive-bg-hover', 'rgba(128,128,128,.16)'))}; }
-.${cls.fab}:active { transform: translateY(.5px); }
-.${cls.fab}:focus-visible { outline: 2px solid ${v('brand-primary', '#4c8dff')}; outline-offset: 2px; }
-.${cls.fabDragging},
-.${cls.fabDragging}:active {
-  cursor: grabbing;
-  transform: none;
-  transition: none;
-}
-.${cls.fabIcon} { display: block; flex: 0 0 auto; opacity: .85; }
-.${cls.fabTotal},
-.${cls.fabRemain} { font-variant-numeric: tabular-nums; font-weight: 600; }
-.${cls.fabSep} { opacity: .4; }
-
-.${cls.popup} {
-  /* 相对 .fabRoot（= 按钮盒子）绝对定位：top/bottom × left/right 由内联样式给，
-     因此既不撑大根元素，也能随按钮位置换边展开。 */
-  position: absolute;
-  /* max-height 是按"按钮到视口边缘的剩余空间"算的，必须是**外框**高度；
-     默认 content-box 会把 30px 内边距加到外面，导致弹层溢出视口。 */
-  box-sizing: border-box;
-  /* 460px 时模型名会被截断（数字列占了固定宽度）；520px 够放下常见模型 id */
-  width: min(520px, calc(100vw - 40px));
-  max-height: min(68vh, 640px);
-  overflow: auto;
-  padding: 14px 16px 16px;
-  border-radius: 12px;
-  border: 1px solid ${v('border-l2', 'rgba(128,128,128,.35)')};
-  background: ${v('bg-overlay', v('bg-layer-1', '#1d1d22'))};
-  box-shadow: 0 10px 30px rgba(0, 0, 0, .34);
-  color: ${v('label-primary', 'inherit')};
-  animation: ${NS}-pop 140ms ease-out;
-  overscroll-behavior: contain;
-}
-.${cls.popupHead} {
+/* ── 设置页里的表单行 ───────────────────────────────── */
+.${cls.formRow} {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding-bottom: 10px;
-  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.${cls.dangerText} { color: ${v('state-error-primary', '#f0635f')}; font-weight: 600; }
+
+/* Key 表格：名称 + 掩码 + 当日状态，只做展示。 */
+.${cls.keyTable} {
+  display: flex;
+  flex-direction: column;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid ${v('border-l1', 'rgba(128,128,128,.22)')};
+  border-radius: 8px;
+}
+.${cls.keyRow} {
+  /* 行是 div（数据行不再可点）—— 少了这条，width:100% 会把 20px 内边距加到外面，
+     第三列被容器裁掉。按钮时代没事是因为 UA 样式默认给了 border-box。 */
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-bottom: 1px solid ${v('border-l1', 'rgba(128,128,128,.16)')};
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.${cls.keyRow}:last-child { border-bottom: none; }
+.${cls.keyRow}:hover { background: ${v('interactive-bg-hover', 'rgba(128,128,128,.14)')}; }
+.${cls.keyRow}:focus-visible { outline: 2px solid ${v('brand-primary', '#4c8dff')}; outline-offset: -2px; }
+.${cls.keyRowActive} { background: color-mix(in srgb, currentColor 8%, transparent); font-weight: 600; }
+/* 表头：不可点、略微压暗，与数据行区分开。 */
+.${cls.keyHead} { cursor: default; opacity: .6; font-size: 10.5px; }
+.${cls.keyHead}:hover { background: transparent; }
+.${cls.keyCell} { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.${cls.keyMasked} {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  opacity: .8;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 详情弹窗的栏目导航（用量 / 资源包） */
+.${cls.tabBar} {
+  display: flex;
+  gap: 4px;
+  flex: none;
+  padding: 8px 14px 0;
   border-bottom: 1px solid ${v('border-l1', 'rgba(128,128,128,.22)')};
 }
-.${cls.popupTitle} { margin: 0; font-size: 13px; font-weight: 600; }
-.${cls.popupBody} { display: flex; flex-direction: column; gap: 14px; }
-.${cls.popupFoot} {
-  margin-top: 12px;
-  padding-top: 10px;
+.${cls.tab} {
+  appearance: none;
+  padding: 6px 12px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: .65;
+  transition: opacity .12s ease, background-color .12s ease;
+}
+.${cls.tab}:hover { opacity: .9; background: color-mix(in srgb, currentColor 6%, transparent); }
+.${cls.tab}:focus-visible { outline: 2px solid ${v('brand-primary', '#4c8dff')}; outline-offset: -2px; }
+.${cls.tabActive} { opacity: 1; font-weight: 600; border-bottom-color: ${v('brand-primary', '#4c8dff')}; }
+
+/* ── 侧栏卡片（左侧列表下方） ──────────────────────────
+   位置不是 slot 给的：sidebar.footer.action 是一条 flex 行（里面还坐着宿主
+   自己的 cordis-panel 按钮），放不下整块卡片，所以容器由 sidebar-mount.tsx
+   直接插进 shell 的 footArea（Settings 行之上）。样式形态对齐宿主自带的
+   「今日用量」速览卡：圆角 12、极淡底色、悬停加深，整块可点。
+
+   句法约定：.sideCard 是容器（position:relative），里面的 .sideCardMain 是
+   唯一的整块按钮，箭头 .sideToggle 是它的**兄弟**按钮 —— 按钮里不能套按钮。 */
+.${cls.sideCard} {
+  box-sizing: border-box;
+  position: relative;
+  width: 100%;
+  margin: 2px 0 4px;
+  border-radius: 12px;
+  color: ${v('label-primary', 'inherit')};
+  background: color-mix(in srgb, currentColor 4%, transparent);
+  transition: background-color .12s ease;
+}
+.${cls.sideCard}:hover { background: ${v('interactive-bg-hover', 'color-mix(in srgb, currentColor 8%, transparent)')}; }
+/* 侧栏收成 56px 图标栏时整块隐藏：那里放不下任何文字卡片。 */
+[data-sidebar-collapsed] .${cls.sideCard} { display: none; }
+
+.${cls.sideCardMain} {
+  appearance: none;
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.${cls.sideCardMain}:focus-visible { outline: 2px solid ${v('brand-primary', '#4c8dff')}; outline-offset: 1px; }
+
+/* 卡片内边距的承载者：收起与展开共用同一圈留白，避免切换时卡片"跳一下"。 */
+.${cls.sideBody} {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+}
+
+/* 收起态：一行速览（图标 + 标题 + 数值），右侧给箭头留出 20px。 */
+.${cls.sideStrip} {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding-right: 20px;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.${cls.sideStripLabel} { opacity: .65; overflow: hidden; text-overflow: ellipsis; }
+.${cls.sideStripValue} {
+  margin-left: auto;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.${cls.sideIcon} { flex: none; display: block; opacity: .65; }
+
+/* 展开态：标题行 + 模型缩略 + 动作行 */
+.${cls.sideHead} {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  /* 右上角的箭头是绝对定位的，标题行给它留出位置，数值不会被压到箭头底下。 */
+  padding-right: 20px;
+}
+.${cls.sideTitle} { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; opacity: .65; min-width: 0; }
+.${cls.sideValue} { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.${cls.sideNote} { font-size: 10.5px; color: ${v('label-caption', 'rgba(128,128,128,.8)')}; font-variant-numeric: tabular-nums; }
+.${cls.sideError} { font-size: 11px; color: ${v('state-error-primary', '#f0635f')}; text-wrap: pretty; }
+
+.${cls.sideModels} { display: flex; flex-direction: column; gap: 7px; }
+.${cls.sideModel} { display: flex; flex-direction: column; gap: 3px; }
+.${cls.sideModelRow} { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 11.5px; }
+.${cls.sideModelName} {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: .85;
+}
+.${cls.sideModelValue} {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.${cls.sideModelBar} {
+  display: block;
+  height: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  overflow: hidden;
+}
+.${cls.sideModelFill} { display: block; height: 100%; border-radius: 999px; background: color-mix(in srgb, currentColor 45%, transparent); transition: width .2s ease; }
+.${cls.sideMore} { font-size: 10.5px; color: ${v('label-caption', 'rgba(128,128,128,.8)')}; font-variant-numeric: tabular-nums; }
+
+.${cls.sideActions} { display: flex; align-items: center; gap: 6px; }
+.${cls.sideMeta} {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: ${v('label-caption', 'rgba(128,128,128,.8)')};
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* 展开/收起箭头：贴在卡片右上角，与整块主按钮互为兄弟。 */
+.${cls.sideToggle} {
+  appearance: none;
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: .55;
+  transition: opacity .12s ease, background-color .12s ease;
+}
+.${cls.sideCard}:hover .${cls.sideToggle} { opacity: .8; }
+.${cls.sideToggle}:hover { opacity: 1; background: color-mix(in srgb, currentColor 10%, transparent); }
+.${cls.sideToggle}:focus-visible { outline: 2px solid ${v('brand-primary', '#4c8dff')}; outline-offset: 1px; }
+.${cls.sideToggle} svg { display: block; }
+
+/* ── 详情弹窗 ────────────────────────────────────────
+   从卡片上的「详情」按钮打开：定位用 fixed，因此挂在侧栏 DOM 里也照样铺满视口。
+   遮罩层吃掉点击（点空白关闭），弹窗本体是居中卡片。 */
+.${cls.overlay} {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: ${v('bg-mask', 'rgba(0, 0, 0, .38)')};
+  animation: ${NS}-fade 120ms ease-out;
+}
+.${cls.dialog} {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: min(560px, calc(100vw - 48px));
+  max-height: min(78vh, 720px);
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid ${v('border-l2', 'rgba(128,128,128,.35)')};
+  background: ${v('bg-overlay', v('bg-layer-1', '#1d1d22'))};
+  color: ${v('label-primary', 'inherit')};
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .38);
+  animation: ${NS}-pop 140ms ease-out;
+}
+.${cls.dialogHead} {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid ${v('border-l1', 'rgba(128,128,128,.22)')};
+}
+.${cls.dialogTitle} { margin: 0; font-size: 13px; font-weight: 600; }
+.${cls.dialogBody} {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.${cls.dialogFoot} {
+  flex: none;
+  padding: 10px 14px;
   border-top: 1px solid ${v('border-l1', 'rgba(128,128,128,.22)')};
   font-size: 11px;
   color: ${v('label-caption', 'rgba(128,128,128,.8)')};
@@ -518,7 +729,24 @@ export const PANEL_CSS = `
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+@keyframes ${NS}-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 尊重"减少动态效果"：弹窗与弹层的入场动画直接关掉。顺带让静态截图能一次拍准
+   —— 动画未跑完时截图会拍到半透明的中间帧。 */
+@media (prefers-reduced-motion: reduce) {
+  .${cls.overlay},
+  .${cls.dialog},
+  .${cls.skeleton},
+  .${cls.progress} { animation: none; }
+}
 `
+
+/** 去注释后的样式；注入 `<style>` 的就是它。 */
+export const PANEL_CSS = RAW_CSS.replace(/\/\*[\s\S]*?\*\//g, '')
 
 /**
  * 利用率条的颜色档位：≥90% 危险、≥75% 警告，其余用业务色。

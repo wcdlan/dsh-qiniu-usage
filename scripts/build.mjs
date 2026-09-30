@@ -42,7 +42,7 @@
  */
 
 import { build } from 'esbuild'
-import { writeFile, mkdir } from 'node:fs/promises'
+import { writeFile, mkdir, rm } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -127,6 +127,10 @@ function verifyClientBundleSource(source) {
 async function main() {
   console.log(`构建 ${PACKAGE_NAME} …`)
   await mkdir(resolve(root, 'lib'), { recursive: true })
+  // 先清掉旧的类型声明：`tsc` 只覆盖它这次生成的 .d.ts，**不会**删除已改名/已删除的
+  // 模块留下的旧文件（例如 FloatingUsage.tsx 拆成 SidebarUsageCard.tsx 之后残留的
+  // `lib/types/client/FloatingUsage.d.ts`），那些幽灵声明会被当成仍然存在的 API。
+  await rm(resolve(root, 'lib/types'), { recursive: true, force: true })
   await buildHost()
   await buildClient()
   console.log('JS 产物构建完成。类型声明由 tsc -p tsconfig.build.json 产出。')

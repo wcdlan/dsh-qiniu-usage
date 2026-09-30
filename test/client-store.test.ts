@@ -73,6 +73,8 @@ function makeFetch(routes: {
   detail?: () => Promise<Response> | Response
   credentialsGet?: () => Promise<Response> | Response
   credentialsPost?: (body: Record<string, unknown>) => Promise<Response> | Response
+  /** `/test/credentials` 与 `/test/key` 合并成一个可编排入口。 */
+  test?: (path: string, body: Record<string, unknown>) => Promise<Response> | Response
 }): {
   fetchImpl: typeof fetch
   calls: { url: string; method: string; body?: unknown }[]
@@ -87,6 +89,12 @@ function makeFetch(routes: {
     const parsedBody = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
     calls.push({ url, method, ...(parsedBody === undefined ? {} : { body: parsedBody }) })
 
+    if (url.startsWith(`${API_PREFIX}/test/`)) {
+      const path = url.slice(API_PREFIX.length)
+      return routes.test === undefined
+        ? json({ ok: true, result: null })
+        : routes.test(path, (parsedBody ?? {}) as Record<string, unknown>)
+    }
     if (url.startsWith(`${API_PREFIX}/credentials`)) {
       if (method === 'POST') {
         return routes.credentialsPost === undefined
@@ -353,6 +361,37 @@ describe('客户端 store · 挂载周期与轮询', () => {
     const initialOverviews = calls.filter((call) => call.url.includes('/overview')).length
     assert.equal(initialOverviews, 1, '重复 start 不应重复首屏请求')
     store.actions.stop()
+  })
+})
+
+describe('客户端 store · setFilters（详情弹窗的日期 + Key 一起改）', () => {
+  it('一次改两个字段，只打一次 /overview', async () => {
+    const { fetchImpl, calls } = makeFetch({})
+    const store = createUsageStore({ fetchImpl })
+    store.actions.start()
+    await waitFor(store, (state) => state.status === 'ready')
+    const before = calls.filter((call) => call.url.includes('/overview')).length
+
+    store.actions.setFilters('yesterday', '我的测试Key')
+    await waitFor(store, (state) => state.status === 'ready')
+
+    const mine = calls.filter((call) => call.url.includes('/overview'))
+    assert.equal(mine.length, before + 1, `应只多一次取数，实际：${mine.map((c) => c.url).join(', ')}`)
+    const url = new URL(mine.at(-1)!.url, 'http://localhost')
+    assert.equal(url.searchParams.get('day'), 'yesterday')
+    assert.equal(url.searchParams.get('key'), '我的测试Key')
+  })
+
+  it('两个字段都没变时不取数', async () => {
+    const { fetchImpl, calls } = makeFetch({})
+    const store = createUsageStore({ fetchImpl })
+    store.actions.start()
+    await waitFor(store, (state) => state.status === 'ready')
+    const before = calls.length
+
+    store.actions.setFilters(store.getSnapshot().day, store.getSnapshot().key)
+    await tick(20)
+    assert.equal(calls.length, before, '没有变化就不该发请求')
   })
 })
 

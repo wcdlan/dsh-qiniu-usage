@@ -67,7 +67,7 @@ describe('产物 · 宿主半区 lib/index.js', () => {
     assert.equal(resolved.usageBaseUrl, 'https://api.qnaigc.com')
     assert.equal(resolved.financeBaseUrl, 'https://api.qiniu.com')
     assert.equal(resolved.timezone, 'Asia/Shanghai')
-    assert.equal(resolved.pollIntervalSec, 0, '默认应为纯手动刷新')
+    assert.equal(resolved.pollIntervalSec, 5, '默认自动刷新 5 秒')
     assert.deepEqual(resolved.apiKeys, [])
   })
 
@@ -151,7 +151,6 @@ describe('产物 · 客户端半区 lib/client.js', () => {
       'slots',
       'locale',
       'connection',
-      'settingsScope',
       'remote',
     ])
   })
