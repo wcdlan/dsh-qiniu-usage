@@ -79,6 +79,7 @@ function renderDetail(detail: RespackDetail | undefined, t: Translate): ReactNod
 
 export function RespackPacks({ snapshot, details, onLoadDetail, t }: RespackPacksProps): ReactNode {
   const [openPacks, setOpenPacks] = useState<Record<string, boolean>>({})
+  const [showFull, setShowFull] = useState(false)
 
   if (snapshot.packages.length === 0) {
     return createElement('div', { className: cls.empty }, t('qiniu.empty.noRespack'))
@@ -90,18 +91,22 @@ export function RespackPacks({ snapshot, details, onLoadDetail, t }: RespackPack
     if (next) onLoadDetail(orderHash, poId)
   }
 
+  // 已用完的包只增不减，且首屏塞满它们会把仍在用的包挤下去：默认折叠。
+  const fullPacks = snapshot.packages.filter((pack) => pack.utilization >= 1)
+  const visible = showFull ? snapshot.packages : snapshot.packages.filter((pack) => pack.utilization < 1)
+
   return createElement(
     'div',
     { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
     createElement(
       'div',
       { className: cls.packs },
-      ...snapshot.packages.map((pack) => {
+      ...visible.map((pack) => {
         const key = `${pack.orderHash}:${pack.poId}`
         const isOpen = openPacks[key] === true
         const detail = details[key]
         const done = pack.status === 3 || pack.utilization >= 1
-        const expiry = expiryText(pack, t)
+        const meta = [expiryText(pack, t), pack.carryOverLabel].filter((part) => part !== '').join(' · ')
 
         return createElement(
           'div',
@@ -128,25 +133,21 @@ export function RespackPacks({ snapshot, details, onLoadDetail, t }: RespackPack
           ),
           createElement(
             'div',
-            { className: cls.packRow },
-            createElement(
-              'div',
-              { className: `${cls.bar} ${cls.packBar}` },
-              createElement('div', {
-                className: cls.barFill,
-                style: barFillStyle(pack.utilization, barTone(pack.utilization)),
-              }),
-            ),
-            createElement(
-              'span',
-              { className: cls.packMeta },
-              [expiry, pack.carryOverLabel].filter((part) => part !== '').join(' · '),
-            ),
+            { className: `${cls.bar} ${cls.packBar}` },
+            createElement('div', {
+              className: cls.barFill,
+              style: barFillStyle(pack.utilization, barTone(pack.utilization)),
+            }),
+          ),
+          createElement(
+            'div',
+            { className: cls.packFoot },
+            createElement('span', { className: cls.packMeta }, meta),
             createElement(
               'button',
               {
                 type: 'button',
-                className: `${cls.btn} ${cls.btnGhost}`,
+                className: `${cls.btn} ${cls.btnGhost} ${cls.packAction}`,
                 onClick: () => toggle(key, pack.orderHash, pack.poId),
               },
               t('qiniu.respack.detail'),
@@ -156,6 +157,19 @@ export function RespackPacks({ snapshot, details, onLoadDetail, t }: RespackPack
         )
       }),
     ),
+    fullPacks.length === 0
+      ? null
+      : createElement(
+          'button',
+          {
+            type: 'button',
+            className: `${cls.btn} ${cls.btnGhost} ${cls.packToggle}`,
+            onClick: () => setShowFull((current) => !current),
+          },
+          showFull
+            ? t('qiniu.respack.hideFull')
+            : t('qiniu.respack.showFull', { count: fullPacks.length }),
+        ),
     createElement(
       'div',
       { className: cls.muted, style: { fontSize: '11px' } },

@@ -1,6 +1,6 @@
 {
   "name": "dsh-qiniu-usage",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "description": "七牛云用量面板插件：在 DSH Web GUI 设置页展示指定 API Key 当天的各模型 Token 用量，以及账号资源包的利用情况",
   "type": "module",
   "engines": {

@@ -50,9 +50,11 @@ export const cls = {
   packHead: `${NS}-pack-head`,
   packName: `${NS}-pack-name`,
   packFigures: `${NS}-pack-figures`,
-  packRow: `${NS}-pack-row`,
   packBar: `${NS}-pack-bar`,
+  packFoot: `${NS}-pack-foot`,
   packMeta: `${NS}-pack-meta`,
+  packAction: `${NS}-pack-action`,
+  packToggle: `${NS}-pack-toggle`,
   callout: `${NS}-callout`,
   calloutWarn: `${NS}-callout-warn`,
   calloutError: `${NS}-callout-error`,
@@ -331,14 +333,23 @@ const RAW_CSS = `
 }
 /* 百分比定宽右对齐，使各行形成一列（跨行可比较） */
 .${cls.packPercent} { min-width: 38px; text-align: right; font-weight: 600; }
-.${cls.packRow} { display: flex; align-items: center; gap: 10px; }
-.${cls.packBar} { flex: 1 1 auto; min-width: 110px; }
+/* 条形独占一整行：与元信息同排时，条尾随到期文案长短浮动，各行对不齐。 */
+.${cls.packBar} { display: block; width: 100%; }
+.${cls.packFoot} { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .${cls.packMeta} {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 11px;
   color: ${v('label-caption', 'rgba(128,128,128,.8)')};
-  white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+/* 下钻与折叠开关：比工具条按钮矮一档，不把包的行距撑开。 */
+.${cls.packAction},
+.${cls.packToggle} { height: 20px; padding: 0 7px; border-radius: 5px; font-size: 11px; }
+.${cls.packToggle} { align-self: flex-start; }
 
 /* 提示条 / 空状态 / 骨架 */
 .${cls.callout} {

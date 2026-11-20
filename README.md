@@ -186,7 +186,8 @@ title, today's total; expanded it shows the three largest models plus a
 - **Model usage** — date (today / yesterday) and key (all keys combined / a single
   key) filters plus the per-model input / output / total table.
 - **Resource packs** — month-to-date utilisation per billing item plus per-pack
-  detail.
+  detail. Fully used packs (100%) are collapsed by default; one toggle at the
+  bottom of the list expands them.
 
 The card title follows those filters: switch to yesterday and it reads 昨日用量,
 filter a key and it appends the key name — card and dialog share one store, so the
